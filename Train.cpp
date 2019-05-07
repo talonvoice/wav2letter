@@ -10,6 +10,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <random>
 
 #include <cereal/archives/json.hpp>
 #include <cereal/types/unordered_map.hpp>
@@ -27,6 +28,39 @@
 #include "runtime/runtime.h"
 
 using namespace w2l;
+
+int randint(int start, int end) {
+    std::random_device rand_dev;
+    std::mt19937 generator(rand_dev());
+    std::uniform_int_distribution<int> distr(start, end);
+    return distr(generator);
+}
+
+af::array create_mask_2d(af::dim4 dims) {
+    int F = 7; // max frequency range cut width (out of 40 bins)
+    int T = std::min(3, (int)dims[0] / 2); // max time cut width (10ms buckets)
+
+    int time_width = randint(0, T);
+    int time_pos = randint(0, dims[0] - time_width - 1);
+    int freq_width = randint(0, F);
+    int freq_pos = randint(0, dims[1] - freq_width - 1);
+
+    af::array mask = af::constant(1, dims, f32);
+    auto rows = mask.rows(time_pos, time_pos + time_width);
+    auto cols = mask.cols(freq_pos, freq_pos + freq_width);
+    rows *= 0;
+    cols *= 0;
+    return mask;
+}
+
+af::array create_mask_4d(af::dim4 dims) {
+    af::dim4 mask_dims(dims[0], dims[1], 1, 1);
+    af::array mask = create_mask_2d(mask_dims);
+    for (int i = 1; i < dims[3]; i++) {
+        mask = af::join(3, mask, create_mask_2d(mask_dims));
+    }
+    return mask;
+}
 
 int main(int argc, char** argv) {
   google::InitGoogleLogging(argv[0]);
@@ -513,11 +547,12 @@ int main(int argc, char** argv) {
       for (auto& sample : *trainset) {
         // meters
         ++sampleIdx;
+        af::array input = sample[kInputIdx] * create_mask_4d(sample[kInputIdx].dims());
         af::sync();
         meters.timer.incUnit();
         meters.sampletimer.stopAndIncUnit();
-        meters.stats.add(sample[kInputIdx], sample[kTargetIdx]);
-        if (af::anyTrue<bool>(af::isNaN(sample[kInputIdx])) ||
+        meters.stats.add(input, sample[kTargetIdx]);
+        if (af::anyTrue<bool>(af::isNaN(input)) ||
             af::anyTrue<bool>(af::isNaN(sample[kTargetIdx]))) {
           LOG(FATAL) << "Sample has NaN values - "
                      << join(",", afToVector<std::string>(sample[kSampleIdx]));
@@ -525,7 +560,7 @@ int main(int argc, char** argv) {
 
         // forward
         meters.fwdtimer.resume();
-        auto output = ntwrk->forward({fl::input(sample[kInputIdx])}).front();
+        auto output = ntwrk->forward({fl::input(input)}).front();
         af::sync();
         meters.critfwdtimer.resume();
         auto loss =
