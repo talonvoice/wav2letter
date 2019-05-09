@@ -37,8 +37,8 @@ int randint(int start, int end) {
 }
 
 af::array create_mask_2d(af::dim4 dims) {
-    int F = 7; // max frequency range cut width (out of 40 bins)
-    int T = std::min(3, (int)dims[0] / 2); // max time cut width (10ms buckets)
+    int F = std::min((int)FLAGS_specaug_F, 40); // max frequency range cut width (out of 40 bins)
+    int T = std::min((int)FLAGS_specaug_T, (int)dims[0] / 2); // max time cut width (10ms buckets)
 
     int time_width = randint(0, T);
     int time_pos = randint(0, dims[0] - time_width - 1);
@@ -551,7 +551,12 @@ int main(int argc, char** argv) {
       for (auto& sample : *trainset) {
         // meters
         ++sampleIdx;
-        af::array input = sample[kInputIdx] * create_mask_4d(sample[kInputIdx].dims());
+        af::array input;
+        if (FLAGS_specaug) {
+            input = sample[kInputIdx] * create_mask_4d(sample[kInputIdx].dims());
+        } else {
+            input = sample[kInputIdx];
+        }
         af::sync();
         meters.timer.incUnit();
         meters.sampletimer.stopAndIncUnit();

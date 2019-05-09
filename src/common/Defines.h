@@ -77,6 +77,10 @@ DECLARE_bool(listdata);
 DECLARE_string(wordseparator);
 DECLARE_double(sampletarget);
 
+DECLARE_bool(specaug);
+DECLARE_int64(specaug_F);
+DECLARE_int64(specaug_T);
+
 /* ========== FILTERING OPTIONS ========== */
 
 DECLARE_int64(minisz);

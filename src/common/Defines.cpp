@@ -48,6 +48,10 @@ DEFINE_double(
     0.0,
     "probability [0.0, 1.0] for randomly sampling targets from a lexicon if there are multiple mappings from a word");
 
+DEFINE_bool(specaug, false, "apply SpecAugment data augmentation");
+DEFINE_int64(specaug_F, 7, "maximum frequency bins to mask (out of 40)");
+DEFINE_int64(specaug_T, 3, "maximum time samples to mask (10ms increments)");
+
 // FILTERING OPTIONS
 DEFINE_int64(minisz, 0, "min input size (in msec) allowed during training");
 DEFINE_int64(
