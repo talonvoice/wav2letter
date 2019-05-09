@@ -216,6 +216,17 @@ target_link_libraries(
   wav2letter++
   )
 
+# ----------------------------- Distill -----------------------------
+add_executable(
+  Distill
+  Distill.cpp
+)
+
+target_link_libraries(
+  Distill
+  wav2letter++
+  )
+
 # ----------------------------- Test -----------------------------
 add_executable(
   Test
