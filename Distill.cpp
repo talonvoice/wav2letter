@@ -481,7 +481,7 @@ int main(int argc, char** argv) {
         // forward
         meters.fwdtimer.resume();
         auto output = ntwrk->forward({fl::input(sample[kInputIdx])}).front();
-        auto refOutput = refNtwrk->forward({fl::input(sample[kInputIdx])}).front();
+        auto refOutput = refNtwrk->forward({fl::noGrad(sample[kInputIdx])}).front();
         af::sync();
 
         // cross-entropy loss
