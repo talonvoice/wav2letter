@@ -200,3 +200,7 @@ target_link_libraries(
   Decoder
   wav2letter++
   )
+
+# ----------------------------- libw2l -----------------------------
+add_library(w2l w2l.cpp)
+target_link_libraries(w2l wav2letter++)
