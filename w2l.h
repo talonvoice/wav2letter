@@ -10,6 +10,7 @@ typedef struct w2l_emission w2l_emission;
 
 w2l_engine *w2l_engine_new(const char *acoustic_model_path, const char *tokens_path);
 w2l_emission *w2l_engine_process(w2l_engine *engine, float *samples, size_t sample_count);
+bool w2l_engine_export(w2l_engine *engine, const char *path);
 void w2l_engine_free(w2l_engine *engine);
 
 char *w2l_emission_text(w2l_emission *emission);
