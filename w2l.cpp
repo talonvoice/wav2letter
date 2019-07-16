@@ -16,9 +16,11 @@
 #include "module/module.h"
 #include "runtime/Logger.h"
 #include "runtime/Serial.h"
-#include "decoder/Decoder.hpp"
-#include "decoder/KenLM.hpp"
-#include "decoder/Trie.hpp"
+#include "decoder/Decoder.h"
+#include "decoder/Trie.h"
+#include "decoder/WordLMDecoder.h"
+#include "decoder/TokenLMDecoder.h"
+#include "lm/KenLM.h"
 
 using namespace w2l;
 
@@ -41,15 +43,13 @@ public:
     ~Emission() {}
 
     char *text() {
-        auto viterbiPath = afToVector<int>(engine->criterion->viterbiPath(emission.array()));
-        if (engine->criterionType == kCtcCriterion || engine->criterionType == kAsgCriterion) {
-            uniq(viterbiPath);
-        }
-        remapLabels(viterbiPath, engine->tokenDict);
-        auto letters = tensor2letters(viterbiPath, engine->tokenDict);
+        auto tokenPrediction =
+            afToVector<int>(engine->criterion->viterbiPath(emission.array()));
+        auto letters = tknPrediction2Ltr(tokenPrediction, engine->tokenDict);
         if (letters.size() > 0) {
-            std::string str = tensor2letters(viterbiPath, engine->tokenDict);
-            return strdup(str.c_str());
+            std::ostringstream ss;
+            for (auto s : letters) ss << s;
+            return strdup(ss.str().c_str());
         }
         return strdup("");
     }
@@ -71,7 +71,7 @@ public:
         network->eval();
         criterion->eval();
 
-        tokenDict = createTokenDict(tokensPath);
+        tokenDict = Dictionary(tokensPath);
         numClasses = tokenDict.indexSize();
     }
     ~Engine() {}
@@ -203,36 +203,34 @@ private:
 class WrapDecoder {
 public:
     WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath) {
-        std::cout << 1 << std::endl;
         auto lexicon = loadWords(lexiconPath, -1);
         wordDict = createWordDict(lexicon);
-        std::cout << 2 << std::endl;
+        lm = std::make_shared<KenLM>(languageModelPath, wordDict);
 
+        // taken from Decode.cpp
+        // Build Trie
         int silIdx = engine->tokenDict.getIndex(kSilToken);
         int blankIdx = engine->criterionType == kCtcCriterion ? engine->tokenDict.getIndex(kBlankToken) : -1;
-        int unkIdx = lm->index(kUnkToken);
-        auto trie = std::make_shared<Trie>(engine->tokenDict.indexSize(), silIdx);
-        auto start_state = lm->start(false);
+        std::shared_ptr<Trie> trie = std::make_shared<Trie>(engine->tokenDict.indexSize(), silIdx);
+        auto startState = lm->start(false);
         for (auto& it : lexicon) {
-            std::string word = it.first;
-            int lmIdx = lm->index(word);
-            if (lmIdx == unkIdx) { // We don't insert unknown words
-                continue;
+            const std::string& word = it.first;
+            int usrIdx = wordDict.getIndex(word);
+            float score = -1;
+            // if (FLAGS_decodertype == "wrd") {
+            if (true) {
+                LMStatePtr dummyState;
+                std::tie(dummyState, score) = lm->score(startState, usrIdx);
             }
-            float score;
-            auto dummyState = lm->score(start_state, lmIdx, score);
             for (auto& tokens : it.second) {
-                auto tokensTensor = tokens2Tensor(tokens, engine->tokenDict);
-                trie->insert(
-                        tokensTensor,
-                        std::make_shared<TrieLabel>(lmIdx, wordDict.getIndex(word)),
-                        score);
+                auto tokensTensor = tkn2Idx(tokens, engine->tokenDict);
+                trie->insert(tokensTensor, usrIdx, score);
             }
         }
-        std::cout << 3 << std::endl;
 
-        SmearingMode smear_mode = SmearingMode::LOGADD;
+        // Smearing
         // TODO: smear mode argument?
+        SmearingMode smear_mode = SmearingMode::LOGADD;
         /*
         SmearingMode smear_mode = SmearingMode::NONE;
         if (FLAGS_smearing == "logadd") {
@@ -244,41 +242,38 @@ public:
         }
         */
         trie->smear(smear_mode);
-        std::cout << 4 << std::endl;
 
-        auto unk = std::make_shared<TrieLabel>(unkIdx, wordDict.getIndex(kUnkToken));
-        decoder = std::make_shared<Decoder>(trie, lm, silIdx, blankIdx, unk);
-
-        std::cout << 5 << std::endl;
-        lm = std::make_shared<KenLM>(languageModelPath);
-
-        std::cout << 6 << std::endl;
-        ModelType modelType = ModelType::ASG;
+        CriterionType criterionType = CriterionType::ASG;
         if (engine->criterionType == kCtcCriterion) {
-            modelType = ModelType::CTC;
+            criterionType = CriterionType::CTC;
         } else if (engine->criterionType != kAsgCriterion) {
             // FIXME:
             LOG(FATAL) << "[Decoder] Invalid model type: " << engine->criterionType;
         }
-        std::cout << 7 << std::endl;
-
         // FIXME, don't use global flags
-        decoderOpt = DecoderOptions(
+        DecoderOptions decoderOpt(
             FLAGS_beamsize,
-            static_cast<float>(FLAGS_beamscore),
+            static_cast<float>(FLAGS_beamthreshold),
             static_cast<float>(FLAGS_lmweight),
             static_cast<float>(FLAGS_wordscore),
             static_cast<float>(FLAGS_unkweight),
-            FLAGS_forceendsil,
             FLAGS_logadd,
             static_cast<float>(FLAGS_silweight),
-            modelType);
-        std::cout << 8 << std::endl;
+            criterionType);
+
+        auto transition = afToVector<float>(engine->criterion->param(0).array());
+        decoder.reset(new WordLMDecoder(
+            decoderOpt,
+            trie,
+            lm,
+            silIdx,
+            blankIdx,
+            wordDict.getIndex(kUnkToken),
+            transition));
     }
     ~WrapDecoder() {}
 
     char *decode(Emission *emission) {
-        auto transition = afToVector<float>(emission->engine->criterion->param(0).array());
         auto rawEmission = emission->emission;
         auto emissionVec = afToVector<float>(rawEmission);
         int N = rawEmission.dims(0);
@@ -287,15 +282,14 @@ public:
         std::vector<float> score;
         std::vector<std::vector<int>> wordPredictions;
         std::vector<std::vector<int>> letterPredictions;
-        std::tie(score, wordPredictions, letterPredictions) = decoder->decode(
-            decoderOpt, &transition[0], emissionVec.data(), T, N);
-        auto wordPrediction = wordPredictions[0];
-        auto words = tensor2words(wordPrediction, wordDict);
+        auto results = decoder->decode(emissionVec.data(), T, N);
+        auto wordPrediction = wrdIdx2Wrd(results[0].words, wordDict);
+        auto words = join(" ", wordPrediction);
         return strdup(words.c_str());
     }
 
     std::shared_ptr<KenLM> lm;
-    std::shared_ptr<Decoder> decoder;
+    std::unique_ptr<Decoder> decoder;
     Dictionary wordDict;
     DecoderOptions decoderOpt;
 };
