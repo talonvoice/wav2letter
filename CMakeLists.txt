@@ -1,243 +1,145 @@
 cmake_minimum_required(VERSION 3.5.1)
+project(libw2l)
 
-project(wav2letter++)
-
-# ----------------------------- Setup -----------------------------
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ----------------------------- Configuration -----------------------------
+link_directories(../opt/lib)
+include_directories(/opt/intel/ipp/include)
+add_definitions(-flto=thin)
 
-option(W2L_BUILD_LIBRARIES_ONLY "Build wav2letter-libraries only" OFF)
-option(W2L_LIBRARIES_USE_CUDA "Use CUDA in libraries-only build" ON)
-option(W2L_LIBRARIES_USE_KENLM "Use KenLM in libraries-only build" ON)
-option(W2L_LIBRARIES_USE_MKL "Use MKL in libraries-only build" ON)
-option(W2L_BUILD_FOR_PYTHON "Build Python bindings" OFF)
-option(W2L_BUILD_TESTS "Build tests for wav2letter++" ON)
-option(W2L_BUILD_EXAMPLES "Build examples for wav2letter++" ON)
-option(W2L_BUILD_EXPERIMENTAL "Build internal experimental components for wav2letter++" OFF)
-option(W2L_BUILD_SCRIPTS "Build internal scripts for wav2letter++" OFF)
-
-# ------------------------- Dependency Fallback -------------------------
-
-if (W2L_LIBRARIES_USE_MKL)
-  find_package(MKL)
-  if (NOT MKL_FOUND)
-    message(WARNING "MKL not found; forcing W2L_LIBRARIES_USE_MKL=OFF.")
-    set(W2L_LIBRARIES_USE_MKL OFF CACHE BOOL "" FORCE)
-  endif ()
-endif ()
-
-# ------------------------- Libraries-Only Build ------------------------------
-
-function(build_w2l_libraries)
-  set(W2L_COMPILE_DEFINITIONS
-    $<$<BOOL:${W2L_LIBRARIES_USE_CUDA}>:W2L_LIBRARIES_USE_CUDA>
-    $<$<BOOL:${W2L_LIBRARIES_USE_KENLM}>:W2L_LIBRARIES_USE_KENLM>
-    $<$<BOOL:${W2L_LIBRARIES_USE_MKL}>:W2L_LIBRARIES_USE_MKL>
-    )
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/libraries)
-  if (W2L_BUILD_FOR_PYTHON)
-    add_subdirectory(${PROJECT_SOURCE_DIR}/bindings/python)
-  endif ()
-endfunction ()
-
-if (W2L_BUILD_LIBRARIES_ONLY)
-  build_w2l_libraries()
-  return()
-endif ()
-
-# ------------------------ Global External Dependencies ------------------------
-# ArrayFire
-# The correct ArrayFire backend target is transitively included by flashlight
-find_package(ArrayFire 3.6.1 REQUIRED)
-if (ArrayFire_FOUND)
-  message(STATUS "ArrayFire found (include: ${ArrayFire_INCLUDE_DIRS}, library: ${ArrayFire_LIBRARIES})")
-else()
-  message(FATAL_ERROR "ArrayFire not found")
-endif()
-
-# Find GLog
 find_package(GLOG REQUIRED)
-if (GLOG_FOUND)
-  message(STATUS "GLOG found")
-else()
-  message(FATAL_ERROR "GLOG not found")
-endif()
-
-# Find GFlags
 find_package(GFLAGS REQUIRED)
-if (GFLAGS_FOUND)
-  message(STATUS "GFLAGS found")
-else()
-  message(FATAL_ERROR "GFLAGS not found")
-endif()
-
-# Find and setup OpenMP
 find_package(OpenMP)
-if (OPENMP_FOUND)
-  message(STATUS "OpenMP found")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-  set(CMAKE_EXE_LINKER_FLAGS
-    "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}"
-  )
-else()
-  message(STATUS "OpenMP not found - building without OpenMP")
-endif()
-
-# ------------------------ flashlight ------------------------
+find_package(Threads REQUIRED)
+find_package(ArrayFire REQUIRED)
 find_package(flashlight REQUIRED)
 if (flashlight_FOUND)
-  message(STATUS "flashlight found (include: ${FLASHLIGHT_INCLUDE_DIRS} lib: flashlight::flashlight )")
-  if (NOT TARGET flashlight::Distributed)
-    message(FATAL_ERROR "flashlight must be build in distributed mode for wav2letter++")
-  else ()
-    message(STATUS "flashlight built in distributed mode.")
-  endif ()
-  if (NOT TARGET flashlight::Contrib)
-    message(FATAL_ERROR "flashlight must be built with contrib features for wav2letter++")
-  else ()
-    message(STATUS "flashlight built with contrib features.")
-  endif ()
+    message(STATUS "flashlight found (include: ${FLASHLIGHT_INCLUDE_DIRS} lib: flashlight::flashlight )")
 else()
-  message(FATAL_ERROR "flashlight not found.")
-endif ()
+    message(FATAL_ERROR "flashlight not found")
+endif()
 
-# "Import" flashlight backend variables using the dummy target
-if (TARGET flashlight::BACKEND_UNIFIED)
-  set(FLASHLIGHT_BACKEND "UNIFIED")
-  set(FLASHLIGHT_USE_UNIFIED ON)
-elseif (TARGET flashlight::BACKEND_CPU)
-  set(FLASHLIGHT_BACKEND "CPU")
-  set(FLASHLIGHT_USE_CPU ON)
-elseif (TARGET flashlight::BACKEND_CUDA)
-  set(FLASHLIGHT_BACKEND "CUDA")
-  set(FLASHLIGHT_USE_CUDA ON)
-elseif (TARGET flashlight::BACKEND_OPENCL)
-  set(FLASHLIGHT_BACKEND "OPENCL")
-  set(FLASHLIGHT_USE_OPENCL ON)
-else ()
-  message(FATAL_ERROR "could not determine flashlight backend")
-endif ()
-
-# ------------------ Configure Full Build ----------------------
-
-if (FLASHLIGHT_USE_CUDA)
-  set(W2L_LIBRARIES_USE_CUDA ON CACHE BOOL "" FORCE)
-endif ()
-set(W2L_LIBRARIES_USE_KENLM ON CACHE BOOL "" FORCE)
-
-# ------------------------ Components ------------------------
-
-# wav2letter-libraries
-build_w2l_libraries()
-
-# Common
-add_subdirectory(${PROJECT_SOURCE_DIR}/src/common)
-
-# Runtime
-add_subdirectory(${PROJECT_SOURCE_DIR}/src/runtime)
-
-# Module
-add_subdirectory(${PROJECT_SOURCE_DIR}/src/module)
-
-# Decoder
-add_subdirectory(${PROJECT_SOURCE_DIR}/src/decoder)
-
-# Criterion
-add_subdirectory(${PROJECT_SOURCE_DIR}/src/criterion)
-
-# Data
-add_subdirectory(${PROJECT_SOURCE_DIR}/src/data)
-
-# LM
-add_subdirectory(${PROJECT_SOURCE_DIR}/src/lm)
-
-# Tests
-if (W2L_BUILD_TESTS)
-  enable_testing()
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/tests)
-endif ()
-
-# ----------------------------- wav2letter++ lib  -----------------------------
-
-add_library(
-  wav2letter++
-  ""
-  )
-
-set_target_properties(
-  wav2letter++
-  PROPERTIES
-  LINKER_LANGUAGE CXX
-  CXX_STANDARD 11
-  )
-
-target_link_libraries(
-  wav2letter++
-  PUBLIC
-  common
-  criterion
-  decoder
-  lm
-  module
-  runtime
-  )
-
-target_include_directories(
-  wav2letter++
-  PUBLIC
-  ${PROJECT_SOURCE_DIR}/src # all includes are based at src/
-  ${FLASHLIGHT_INCLUDE_DIRS} # includes are <flashlight/...>
-  )
-
-# Build experimental assets if specified
-if (W2L_BUILD_EXPERIMENTAL)
-  message(STATUS "Building experimental assets.")
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/experimental)
-endif ()
-
-# Build scripts if specified
-if (W2L_BUILD_SCRIPTS)
-  message(STATUS "Building scripts.")
-  add_subdirectory(${PROJECT_SOURCE_DIR}/scripts)
-endif ()
-
-# ----------------------------- Train -----------------------------
-add_executable(
-  Train
-  Train.cpp
+set(COMMON_SRC
+    src/common/Defines.cpp
+    src/common/Dictionary.cpp
+    src/common/Transforms.cpp
+    src/common/Utils.cpp
+    src/common/Utils-base.cpp
 )
 
-target_link_libraries(
-  Train
-  wav2letter++
-  )
+set(RUNTIME_SRC
+    src/runtime/Logger.cpp
+    src/runtime/Serial.cpp
+    src/runtime/SpeechStatMeter.cpp
+    src/runtime/Optimizer.cpp
+)
 
-# ----------------------------- Test -----------------------------
-add_executable(
-  Test
-  Test.cpp
-  )
+set(MODULE_SRC
+    src/module/SpecAugment.cpp
+    src/module/TDSBlock.cpp
+    src/module/W2lModule.cpp
+)
 
-target_link_libraries(
-  Test
-  wav2letter++
-  )
+set(DECODER_SRC
+    src/decoder/Seq2SeqDecoder.cpp
+    src/decoder/LexiconDecoder.cpp
+    src/decoder/LexiconFreeDecoder.cpp
+    src/decoder/TokenLMDecoder.cpp
+    src/decoder/Trie.cpp
+    src/decoder/Utils.cpp
+    src/decoder/WordLMDecoder.cpp
+)
 
-# ----------------------------- Decoder -----------------------------
-add_executable(
-  Decoder
-  Decode.cpp
-  )
+set(CRITERION_SRC
+    src/criterion/ConnectionistTemporalClassificationCriterion.cpp
+    src/criterion/CriterionUtils.cpp
+    src/criterion/ConnectionistTemporalClassificationCriterion.cpp
+    src/criterion/CriterionUtils.cpp
+    src/criterion/ForceAlignmentCriterion.cpp
+    src/criterion/Seq2SeqCriterion.cpp
+    src/criterion/FullConnectionCriterion.cpp
 
-target_link_libraries(
-  Decoder
-  wav2letter++
-  )
+    src/criterion/attention/ContentAttention.cpp
+    src/criterion/attention/LocationAttention.cpp
+    src/criterion/attention/MedianWindow.cpp
+    src/criterion/attention/SoftPretrainWindow.cpp
+    src/criterion/attention/SoftWindow.cpp
+    src/criterion/attention/StepWindow.cpp
 
-# ----------------------------- libw2l -----------------------------
-add_library(w2l w2l.cpp)
-target_link_libraries(w2l wav2letter++)
+    src/criterion/backend/cpu/ConnectionistTemporalClassificationCriterion.cpp
+    src/criterion/backend/cpu/CriterionUtils.cpp
+    src/criterion/backend/cpu/ForceAlignmentCriterion.cpp
+    src/criterion/backend/cpu/FullConnectionCriterion.cpp
+)
+
+set(LIBRARIES_SRC
+    src/libraries/criterion/cpu/CriterionUtils.cpp
+    src/libraries/criterion/cpu/ForceAlignmentCriterion.cpp
+    src/libraries/criterion/cpu/FullConnectionCriterion.cpp
+    src/libraries/criterion/cpu/ViterbiPath.cpp
+
+    src/libraries/feature/Ceplifter.cpp
+    src/libraries/feature/Dct.cpp
+    src/libraries/feature/Derivatives.cpp
+    src/libraries/feature/Dither.cpp
+    src/libraries/feature/Mfcc.cpp
+    src/libraries/feature/Mfsc.cpp
+    src/libraries/feature/PowerSpectrum.cpp
+    src/libraries/feature/PreEmphasis.cpp
+    src/libraries/feature/SpeechUtils.cpp
+    src/libraries/feature/TriFilterbank.cpp
+    src/libraries/feature/Windowing.cpp
+)
+
+find_library(LIBIPPS NAMES libipps.a HINTS /opt/intel/ipp/lib)
+find_library(LIBIPPVM NAMES libippvm.a HINTS /opt/intel/ipp/lib)
+find_library(LIBIPPCORE NAMES libippcore.a HINTS /opt/intel/ipp/lib)
+set(IPP_LIBS ${LIBIPPS} ${LIBIPPCORE} ${LIBIPPVM})
+set(DATA_SRC
+    src/data/Utils.cpp
+    src/data/Featurize.cpp
+)
+
+find_package(kenlm REQUIRED)
+set(KENLM_MAX_ORDER 6 CACHE STRING "KENLM_MAX_ORDER")
+add_definitions(-DBMR_USE_QUICKSELECT -DKENLM_MAX_ORDER=${KENLM_MAX_ORDER})
+set(LM_SRC
+    src/lm/KenLM.cpp
+    src/lm/ConvLM.cpp
+)
+
+add_library(w2l SHARED
+    ${COMMON_SRC}
+    ${RUNTIME_SRC}
+    ${MODULE_SRC}
+    ${DECODER_SRC}
+    ${CRITERION_SRC}
+    ${DATA_SRC}
+    ${LIBRARIES_SRC}
+    ${LM_SRC}
+    w2l.cpp
+)
+
+set_target_properties(ArrayFire::afcpu PROPERTIES INTERFACE_LINK_LIBRARIES "")
+target_link_libraries(w2l
+    ${KENLM_LIBRARIES}
+    ${IPP_LIBS}
+    ${OPENMP_LIBRARIES}
+    "-framework Accelerate"
+    ArrayFire::afcpu
+    flashlight::flashlight
+    gflags
+    glog
+    omp
+    lzma
+)
+
+target_include_directories(
+  w2l
+  PUBLIC
+  ${PROJECT_SOURCE_DIR}/src
+  ${KENLM_INCLUDE_DIRS}
+  ${FLASHLIGHT_INCLUDE_DIRS}
+)
