@@ -70,12 +70,14 @@ void allreduceSet(fl::TimeMeter& mtr, af::array& val);
 
 template <typename T>
 void syncMeter(T& mtr) {
+#if 0
   if (!fl::isDistributedInit()) {
     return;
   }
   af::array arr = allreduceGet(mtr);
   fl::allReduce(arr);
   allreduceSet(mtr, arr);
+#endif
 }
 
 template <>

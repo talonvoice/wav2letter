@@ -79,7 +79,7 @@ std::pair<std::string, std::string> getStatus(
   } else {
     audioProcSec /= FLAGS_samplerate;
   }
-  auto worldSize = fl::getWorldSize();
+  auto worldSize = 1;
   double timeTakenSec = meters.timer.value() * numsamples / worldSize;
 
   insertItem("hrs", format("%7.2f", audioProcSec / 3600.0));
@@ -177,7 +177,7 @@ void allreduceSet(fl::CountMeter& mtr, af::array& val) {
 }
 
 void allreduceSet(fl::TimeMeter& mtr, af::array& val) {
-  auto worldSize = fl::getWorldSize();
+  auto worldSize = 1;
   auto valVec = afToVector<double>(val);
   mtr.set(valVec[0] / worldSize);
 }
