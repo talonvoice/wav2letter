@@ -9,8 +9,7 @@
 #pragma once
 
 #include <mutex>
-
-#include <fftw3.h>
+#include <ipp.h>
 
 #include "Dither.h"
 #include "FeatureParams.h"
@@ -54,8 +53,14 @@ class PowerSpectrum {
   PreEmphasis<T> preEmphasis_;
   Windowing<T> windowing_;
 
-  fftw_plan fftPlan_;
-  std::vector<double> inFftBuf_, outFftBuf_;
+  std::vector<Ipp64f> inFftBuf_;
+  std::vector<Ipp64fc> outFftBuf_;
   std::mutex fftMutex_;
+
+  Ipp8u *m_memBuffer;
+  Ipp8u *m_memSpec;
+  IppsFFTSpec_R_64f *m_fftSpec;
+  Ipp64f *m_outPerm;
+  Ipp64fc *m_outComplex;
 };
 } // namespace w2l
