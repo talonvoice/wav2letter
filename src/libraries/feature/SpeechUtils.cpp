@@ -11,7 +11,7 @@
 #include <cstddef>
 #include <stdexcept>
 
-#if W2L_LIBRARIES_USE_MKL
+#if USE_MKL
 #include <mkl_cblas.h>
 #elif __APPLE__
 #include <Accelerate/Accelerate.h>

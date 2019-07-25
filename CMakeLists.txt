@@ -122,6 +122,10 @@ add_library(w2l SHARED
     w2l.cpp
 )
 
+if (USE_MKL)
+    target_compile_definitions(w2l PUBLIC -DUSE_MKL)
+endif()
+
 set_target_properties(ArrayFire::afcpu PROPERTIES INTERFACE_LINK_LIBRARIES "")
 target_link_libraries(w2l
     ${KENLM_LIBRARIES}
