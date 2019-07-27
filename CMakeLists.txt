@@ -136,7 +136,6 @@ target_link_libraries(w2l
     ${KENLM_LIBRARIES}
     ${IPP_LIBS}
     ${OPENMP_LIBRARIES}
-    ArrayFire::afcpu
     flashlight::flashlight
     gflags
     glog
