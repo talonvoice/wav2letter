@@ -11,7 +11,7 @@ add_definitions(-flto=thin)
 
 find_package(GLOG REQUIRED)
 find_package(GFLAGS REQUIRED)
-find_package(OpenMP)
+find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
 find_package(ArrayFire REQUIRED)
 find_package(flashlight REQUIRED)
@@ -138,9 +138,9 @@ target_link_libraries(w2l
     ${IPP_LIBS}
     ${OPENMP_LIBRARIES}
     flashlight::flashlight
-    gflags
-    glog
-    omp
+    ${GFLAGS_LIBRARIES}
+    ${GLOG_LIBRARIES}
+    ${OpenMP_LIBRARIES}
     lzma
 )
 
