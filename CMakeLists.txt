@@ -124,6 +124,9 @@ add_library(w2l SHARED
 
 if (USE_MKL)
     target_compile_definitions(w2l PUBLIC -DUSE_MKL)
+    find_library(MKL_CORE NAMES libmkl_core.a)
+    find_library(MKL_INTEL_ILP64 NAMES libmkl_intel_ilp64.a)
+    target_link_libraries(w2l ${MKL_CORE} ${MKL_INTEL_ILP64})
 else()
     target_link_libraries(w2l "-framework Accelerate")
 endif()
