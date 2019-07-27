@@ -9,9 +9,9 @@ link_directories(../opt/lib)
 include_directories(/opt/intel/ipp/include)
 add_definitions(-flto=thin)
 
+find_library(LIBOMP NAMES libomp.a)
 find_package(GLOG REQUIRED)
 find_package(GFLAGS REQUIRED)
-find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
 find_package(ArrayFire REQUIRED)
 find_package(flashlight REQUIRED)
@@ -140,7 +140,7 @@ target_link_libraries(w2l
     flashlight::flashlight
     ${GFLAGS_LIBRARIES}
     ${GLOG_LIBRARIES}
-    ${OpenMP_LIBRARIES}
+    ${LIBOMP}
     lzma
 )
 
