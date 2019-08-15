@@ -35,9 +35,7 @@ PowerSpectrum<T>::PowerSpectrum(const FeatureParams& params)
   IppHintAlgorithm quality = ippAlgHintNone;
   int sizeSpec, sizeInit, sizeBuffer;
   if (ippsFFTGetSize_R_64f(order, flags, quality, &sizeSpec, &sizeInit, &sizeBuffer) != ippStsNoErr) {
-    // TODO???
-    printf("getSize failed: %d\n", order);
-    abort();
+    throw std::runtime_error("ippsFFTGetSize_R_64f failed on order " + std::to_string(order));
   }
   m_memSpec = ippsMalloc_8u(sizeSpec);
   m_memBuffer = ippsMalloc_8u(sizeBuffer);
@@ -46,9 +44,7 @@ PowerSpectrum<T>::PowerSpectrum(const FeatureParams& params)
     memInit = ippsMalloc_8u(sizeInit);
   }
   if (ippsFFTInit_R_64f(&m_fftSpec, order, flags, quality, m_memSpec, memInit) != ippStsNoErr) {
-    printf("init failed: %d\n", order);
-    // TODO???
-    abort();
+    throw std::runtime_error("ippsFFTInit_R_64f failed on order " + std::to_string(order));
   }
   ippFree(memInit);
 }
