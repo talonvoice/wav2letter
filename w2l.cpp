@@ -283,7 +283,8 @@ public:
         std::vector<std::vector<int>> wordPredictions;
         std::vector<std::vector<int>> letterPredictions;
         auto results = decoder->decode(emissionVec.data(), T, N);
-        auto wordPrediction = wrdIdx2Wrd(results[0].words, wordDict);
+        auto rawWordPrediction = validateIdx(results[0].words, wordDict.getIndex(kUnkToken));
+        auto wordPrediction = wrdIdx2Wrd(rawWordPrediction, wordDict);
         auto words = join(" ", wordPrediction);
         return strdup(words.c_str());
     }
