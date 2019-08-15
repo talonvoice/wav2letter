@@ -87,20 +87,13 @@ std::vector<T> PowerSpectrum<T>::powSpectrumImpl(std::vector<T>& frames) {
   windowing_.applyInPlace(frames);
   std::vector<T> dft(K * nFrames);
   std::vector<double> dftDouble(K * nFrames);
+  std::lock_guard<std::mutex> lock(fftMutex_);
   for (size_t f = 0; f < nFrames; ++f) {
     auto begin = frames.data() + f * nSamples;
     {
-      std::lock_guard<std::mutex> lock(fftMutex_);
       std::copy(begin, begin + nSamples, inFftBuf_.data());
-
       ippsFFTFwd_RToPerm_64f(inFftBuf_.data(), m_outPerm, m_fftSpec, m_memBuffer);
-      ippsConjPerm_64fc(m_outPerm, outFftBuf_.data(), K);
-
-      // Copy stuff to the redundant part
-      for (size_t i = K; i < nFft; ++i) {
-        outFftBuf_[i].re = outFftBuf_[nFft - i].re;
-        outFftBuf_[i].im = -outFftBuf_[nFft - i].im;
-      }
+      ippsConjPerm_64fc(m_outPerm, outFftBuf_.data(), nFft);
       ippsMagnitude_64fc(outFftBuf_.data(), &dftDouble[f * K], K);
     }
   }
