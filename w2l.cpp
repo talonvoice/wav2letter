@@ -22,6 +22,8 @@
 #include "decoder/TokenLMDecoder.h"
 #include "lm/KenLM.h"
 
+#include "w2l.h"
+
 using namespace w2l;
 
 class EngineBase {
@@ -202,7 +204,7 @@ private:
 
 class WrapDecoder {
 public:
-    WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath) {
+    WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath, const w2l_decode_options *opts) {
         auto lexicon = loadWords(lexiconPath, -1);
         wordDict = createWordDict(lexicon);
         lm = std::make_shared<KenLM>(languageModelPath, wordDict);
@@ -230,7 +232,7 @@ public:
 
         // Smearing
         // TODO: smear mode argument?
-        SmearingMode smear_mode = SmearingMode::LOGADD;
+        SmearingMode smear_mode = SmearingMode::MAX;
         /*
         SmearingMode smear_mode = SmearingMode::NONE;
         if (FLAGS_smearing == "logadd") {
@@ -252,13 +254,13 @@ public:
         }
         // FIXME, don't use global flags
         DecoderOptions decoderOpt(
-            FLAGS_beamsize,
-            static_cast<float>(FLAGS_beamthreshold),
-            static_cast<float>(FLAGS_lmweight),
-            static_cast<float>(FLAGS_wordscore),
-            static_cast<float>(FLAGS_unkweight),
-            FLAGS_logadd,
-            static_cast<float>(FLAGS_silweight),
+            opts->beamsize,
+            opts->beamthresh,
+            opts->lmweight,
+            opts->wordscore,
+            opts->unkweight,
+            opts->logadd,
+            opts->silweight,
             criterionType);
 
         auto transition = afToVector<float>(engine->criterion->param(0).array());
@@ -297,8 +299,6 @@ public:
 
 extern "C" {
 
-#include "w2l.h"
-
 typedef struct w2l_engine w2l_engine;
 typedef struct w2l_decoder w2l_decoder;
 typedef struct w2l_emission w2l_emission;
@@ -336,9 +336,9 @@ void w2l_emission_free(w2l_emission *emission) {
         delete reinterpret_cast<Emission *>(emission);
 }
 
-w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path) {
+w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const w2l_decode_options *opts) {
     // TODO: what other config? beam size? smearing? lm weight?
-    auto decoder = new WrapDecoder(reinterpret_cast<Engine *>(engine), kenlm_model_path, lexicon_path);
+    auto decoder = new WrapDecoder(reinterpret_cast<Engine *>(engine), kenlm_model_path, lexicon_path, opts);
     return reinterpret_cast<w2l_decoder *>(decoder);
 }
 
