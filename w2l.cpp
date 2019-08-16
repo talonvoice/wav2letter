@@ -152,11 +152,11 @@ private:
         auto type = pretty.substr(0, pretty.find(' '));
         std::cout << "[w2lapi] exporting: " << pretty << std::endl;
         if (type == "WeightNorm") {
-            auto wn = dynamic_cast<fl::WeightNorm *>(module);
-            auto lastParam = pretty.rfind(",") + 2;
-            auto dim = pretty.substr(lastParam, pretty.size() - lastParam - 1);
-            f << "WN " << dim << " ";
-            exportLayer(f, wn->module().get());
+//            auto wn = dynamic_cast<fl::WeightNorm *>(module);
+//            auto lastParam = pretty.rfind(",") + 2;
+//            auto dim = pretty.substr(lastParam, pretty.size() - lastParam - 1);
+//            f << "WN " << dim << " ";
+//            exportLayer(f, wn->module().get());
         } else if (type == "View") {
             auto ratio = findParens(pretty);
             f << "V " << findParens(pretty) << "\n";
