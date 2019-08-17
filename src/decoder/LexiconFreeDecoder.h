@@ -47,6 +47,10 @@ struct LexiconFreeDecoderState {
     return -1;
   }
 
+  int getToken() const {
+    return token;
+  }
+
   bool isComplete() const {
     return true;
   }

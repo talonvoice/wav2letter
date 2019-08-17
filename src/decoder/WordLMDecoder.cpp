@@ -60,7 +60,7 @@ void WordLMDecoder::decodeStep(const float* emissions, int T, int N) {
           }
 
           // We eat-up a new token
-          if (opt_.criterionType != CriterionType::CTC || prevHyp.prevBlank ||
+          if (opt_.criterionType != CriterionType::CTC || prevHyp.getPrevBlank() ||
               n != prevIdx) {
             if (!lex->children.empty()) {
               privateCandidates.emplace_back(
@@ -107,7 +107,7 @@ void WordLMDecoder::decodeStep(const float* emissions, int T, int N) {
         }
 
         /* (2) Try same lexicon node */
-        if (opt_.criterionType != CriterionType::CTC || !prevHyp.prevBlank) {
+        if (opt_.criterionType != CriterionType::CTC || !prevHyp.getPrevBlank()) {
           int n = prevIdx;
           float score = prevHyp.score + emissions[t * N + n];
           if (nDecodedFrames_ + t > 0 &&

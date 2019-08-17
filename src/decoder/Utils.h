@@ -138,7 +138,7 @@ DecodeResult getHypothesis(const DecoderState* node, const int finalFrame) {
   int i = 0;
   while (node_) {
     res.words[finalFrame - i] = node_->getWord();
-    res.tokens[finalFrame - i] = node_->token;
+    res.tokens[finalFrame - i] = node_->getToken();
     node_ = node_->parent;
     i++;
   }
