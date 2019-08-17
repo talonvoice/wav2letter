@@ -9,6 +9,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <queue>
 
 #include "decoder/Decoder.h"
 #include "decoder/LM.h"
@@ -58,6 +59,10 @@ struct LexiconDecoderState {
 
   bool isComplete() const {
     return !parent || parent->word >= 0;
+  }
+
+  bool operator<(const LexiconDecoderState &other) const {
+      return score < other.score;
   }
 };
 
@@ -113,11 +118,7 @@ class LexiconDecoder : public Decoder {
 
   // All the hypothesis new candidates (can be larger than beamsize) proposed
   // based on the ones from previous frame
-  std::vector<LexiconDecoderState> candidates_;
-
-  // This vector is designed for efficient sorting and merging the candidates_,
-  // so instead of moving around objects, we only need to sort pointers
-  std::vector<LexiconDecoderState*> candidatePtrs_;
+  std::priority_queue<LexiconDecoderState> candidates_;
 
   // Best candidate score of current frame
   float candidatesBestScore_;

@@ -21,8 +21,7 @@ namespace w2l {
 
 void LexiconDecoder::candidatesReset() {
   candidatesBestScore_ = kNegativeInfinity;
-  candidates_.clear();
-  candidatePtrs_.clear();
+  candidates_ = std::priority_queue<LexiconDecoderState>();
 }
 
 void LexiconDecoder::candidatesAdd(
@@ -34,7 +33,7 @@ void LexiconDecoder::candidatesAdd(
     const int word,
     const bool prevBlank) {
   if (isValidCandidate(candidatesBestScore_, score, opt_.beamThreshold)) {
-    candidates_.emplace_back(
+    candidates_.emplace(
         lmState, lex, parent, score, token, word, prevBlank);
   }
 }
@@ -42,20 +41,13 @@ void LexiconDecoder::candidatesAdd(
 void LexiconDecoder::candidatesStore(
     std::vector<LexiconDecoderState>& nextHyp,
     const bool returnSorted) {
-  if (candidates_.empty()) {
-    nextHyp.clear();
-    return;
+  nextHyp.clear();
+  nextHyp.reserve(std::min<size_t>(candidates_.size(), opt_.beamSize));
+  while (nextHyp.size() < opt_.beamSize && !candidates_.empty()) {
+    auto& c = candidates_.top();
+    nextHyp.emplace_back(std::move(c));
+    candidates_.pop();
   }
-
-  /* Select valid candidates */
-  pruneCandidates(
-      candidatePtrs_, candidates_, candidatesBestScore_ - opt_.beamThreshold);
-
-  /* Sort by (lmState, lex, score) and copy into next hypothesis */
-  mergeCandidates();
-
-  /* Sort hypothesis and select top-K */
-  storeTopCandidates(nextHyp, candidatePtrs_, opt_.beamSize, returnSorted);
 }
 
 void LexiconDecoder::decodeBegin() {

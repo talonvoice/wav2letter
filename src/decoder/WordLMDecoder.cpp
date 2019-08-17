@@ -20,37 +20,6 @@
 namespace w2l {
 
 void WordLMDecoder::mergeCandidates() {
-  auto compareNodesShortList = [&](const LexiconDecoderState* node1,
-                                   const LexiconDecoderState* node2) {
-    int lmCmp = lm_->compareState(node1->lmState, node2->lmState);
-    if (lmCmp != 0) {
-      return lmCmp > 0;
-    } else if (node1->lex != node2->lex) {
-      /* same LmState */
-      return node1->lex > node2->lex;
-    } else {
-      /* same LmState, same lex */
-      return node1->score > node2->score;
-    }
-  };
-  std::sort(
-      candidatePtrs_.begin(), candidatePtrs_.end(), compareNodesShortList);
-
-  int nHypAfterMerging = 1;
-  for (int i = 1; i < candidatePtrs_.size(); i++) {
-    if (lm_->compareState(
-            candidatePtrs_[i]->lmState,
-            candidatePtrs_[nHypAfterMerging - 1]->lmState) ||
-        candidatePtrs_[i]->lex != candidatePtrs_[nHypAfterMerging - 1]->lex) {
-      candidatePtrs_[nHypAfterMerging] = candidatePtrs_[i];
-      nHypAfterMerging++;
-    } else {
-      mergeStates(
-          candidatePtrs_[nHypAfterMerging - 1], candidatePtrs_[i], opt_.logAdd);
-    }
-  }
-
-  candidatePtrs_.resize(nHypAfterMerging);
 }
 
 void WordLMDecoder::decodeStep(const float* emissions, int T, int N) {
