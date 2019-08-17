@@ -143,6 +143,7 @@ class LexiconDecoder : public Decoder {
   void candidatesReset();
 
   // Add a new candidate to the buffer
+  void candidatesAdd(const LexiconDecoderState &candidate);
   void candidatesAdd(
       const LMStatePtr& lmState,
       const TrieNode* lex,

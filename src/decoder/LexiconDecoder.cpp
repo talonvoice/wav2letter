@@ -24,6 +24,12 @@ void LexiconDecoder::candidatesReset() {
   candidates_ = std::priority_queue<LexiconDecoderState>();
 }
 
+void LexiconDecoder::candidatesAdd(const LexiconDecoderState& c) {
+  if (isValidCandidate(candidatesBestScore_, c.score, opt_.beamThreshold)) {
+    candidates_.emplace(c);
+  }
+}
+
 void LexiconDecoder::candidatesAdd(
     const LMStatePtr& lmState,
     const TrieNode* lex,
