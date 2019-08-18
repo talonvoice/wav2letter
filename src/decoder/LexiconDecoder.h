@@ -19,14 +19,20 @@ namespace w2l {
 /**
  * LexiconDecoderState stores information for each hypothesis in the beam.
  */
+
+#pragma pack(push, 1)
+
 struct LexiconDecoderState {
   LMStatePtr lmState; // Language model state
   const TrieNode* lex; // Trie node in the lexicon
   const LexiconDecoderState* parent; // Parent hypothesis
+  /* tag represents bitwise:
+   * int word : 23
+   * bool prevBlank : 1
+   * int token : 8
+   */
+  uint32_t tag;
   float score; // Score so far
-  int token; // Label of token
-  int word; // Label of word (-1 if incomplete)
-  bool prevBlank; // If previous hypothesis is blank (for CTC only)
 
   LexiconDecoderState(
       const LMStatePtr& lmState,
@@ -39,32 +45,51 @@ struct LexiconDecoderState {
       : lmState(lmState),
         lex(lex),
         parent(parent),
-        score(score),
-        token(token),
-        word(word),
-        prevBlank(prevBlank) {}
+        score(score) {
+          setToken(token);
+          setWord(word);
+          setPrevBlank(prevBlank);
+        }
 
   LexiconDecoderState()
       : lmState(nullptr),
         lex(nullptr),
         parent(nullptr),
         score(0),
-        token(-1),
-        word(-1),
-        prevBlank(false) {}
+        tag(0xfffffeff) {}
+
+  int getToken() const {
+    int16_t token = tag & 0xFF;
+    return token;
+  }
+  void setToken(int token) {
+    tag = (tag & ~0xFF) | (token & 0xFF);
+  }
 
   int getWord() const {
-    return word;
+    int32_t word = (tag & 0xFFFFFE00);
+    return word >> 9;
+  }
+  void setWord(int word) {
+    tag = (tag & ~0xFFFFFE00) | ((word << 9) & 0xFFFFFE00);
+  }
+
+  bool getPrevBlank() const {
+    return (tag >> 8) & 1;
+  }
+  void setPrevBlank(bool prevBlank) {
+    tag = (tag & ~(1 << 8)) | (prevBlank & 1) << 8;
   }
 
   bool isComplete() const {
-    return !parent || parent->word >= 0;
+    return !parent || parent->getWord() != -1;
   }
 
   bool operator<(const LexiconDecoderState &other) const {
       return score < other.score;
   }
 };
+#pragma pack(pop)
 
 /**
  * Decoder implements a beam seach decoder that finds the word transcription

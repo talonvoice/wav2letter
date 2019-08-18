@@ -56,7 +56,7 @@ void TokenLMDecoder::decodeStep(const float* emissions, int T, int N) {
         score += lmScoreReturn.second * opt_.lmWeight;
 
         // We eat-up a new token
-        if (opt_.criterionType != CriterionType::CTC || prevHyp.prevBlank ||
+        if (opt_.criterionType != CriterionType::CTC || prevHyp.getPrevBlank() ||
             n != prevIdx) {
           if (!lex->children.empty()) {
             candidatesAdd(
@@ -99,7 +99,7 @@ void TokenLMDecoder::decodeStep(const float* emissions, int T, int N) {
       }
 
       /* (2) Try same lexicon node */
-      if (opt_.criterionType != CriterionType::CTC || !prevHyp.prevBlank) {
+      if (opt_.criterionType != CriterionType::CTC || !prevHyp.getPrevBlank()) {
         int n = prevIdx;
         float score = prevHyp.score + emissions[t * N + n];
         if (nDecodedFrames_ + t > 0 &&

@@ -54,6 +54,10 @@ struct Seq2SeqDecoderState {
         token(-1),
         amState(nullptr) {}
 
+  int getToken() const {
+    return token;
+  }
+
   int getWord() const {
     return -1;
   }
