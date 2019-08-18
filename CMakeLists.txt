@@ -9,6 +9,10 @@ link_directories(../opt/lib)
 include_directories(/opt/intel/ipp/include)
 add_definitions(-flto=thin)
 
+if (APPLE)
+    add_definitions(-Xpreprocessor -fopenmp)
+endif()
+
 find_library(LIBOMP NAMES libomp.a)
 find_package(GLOG REQUIRED)
 find_package(GFLAGS REQUIRED)
