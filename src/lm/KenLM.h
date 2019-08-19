@@ -45,6 +45,8 @@ class KenLM : public LM {
 
   std::pair<LMStatePtr, float> finish(const LMStatePtr& state) override;
 
+  size_t stateHash(const LMStatePtr& state) const override;
+
   int compareState(const LMStatePtr& state1, const LMStatePtr& state2)
       const override;
 

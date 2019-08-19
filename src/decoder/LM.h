@@ -35,6 +35,9 @@ class LM {
       const LMStatePtr& state,
       const int usrTokenIdx) = 0;
 
+  // hash the internal state
+  virtual size_t stateHash(const LMStatePtr& state) const = 0;
+
   /* Query the language model and finish decoding. */
   virtual std::pair<LMStatePtr, float> finish(const LMStatePtr& state) = 0;
 

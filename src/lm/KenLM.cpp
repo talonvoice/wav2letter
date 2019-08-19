@@ -77,6 +77,11 @@ int KenLM::compareState(const LMStatePtr& state1, const LMStatePtr& state2)
   return inState1->Compare(*inState2);
 }
 
+size_t KenLM::stateHash(const LMStatePtr& state) const {
+  auto raw = getRawState(state);
+  return hash_value(*raw);
+}
+
 KenLMState* KenLM::getRawState(const LMStatePtr& state) {
   return static_cast<KenLMState*>(state.get());
 }

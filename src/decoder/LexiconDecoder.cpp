@@ -17,6 +17,7 @@
 #include <string.h>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "decoder/LexiconDecoder.h"
 
@@ -41,14 +42,39 @@ void LexiconDecoder::candidatesAdd(
   }
 }
 
+// used for making an unordered_set of LexiconDecoderStates based on their LMStatePtr
+struct StateHash {
+  LMPtr lm_;
+  size_t operator()(const LexiconDecoderState *v) const {
+    return lm_->stateHash(v->lmState) ^ size_t(v->lex);
+  }
+};
+
+struct StateEquality {
+  LMPtr lm_;
+  int operator()(const LexiconDecoderState *v1, const LexiconDecoderState *v2) const {
+    return v1->lex == v2->lex && lm_->compareState(v1->lmState, v2->lmState) == 0;
+  }
+};
+
 void LexiconDecoder::candidatesStore(
     std::vector<LexiconDecoderState>& nextHyp,
     const bool returnSorted) {
   nextHyp.clear();
   nextHyp.reserve(std::min<size_t>(candidates_.size(), opt_.beamSize));
+
+  std::unordered_set<const LexiconDecoderState *, StateHash, StateEquality>
+    seen(opt_.beamSize * 2, StateHash{lm_}, StateEquality{lm_});;
+
   while (nextHyp.size() < opt_.beamSize && !candidates_.empty()) {
-    auto& c = candidates_.top();
-    nextHyp.emplace_back(std::move(c));
+    auto& c = std::move(candidates_.top());
+    if (c.score < candidatesBestScore_ - opt_.beamThreshold) {
+      break;
+    }
+    if (seen.find(&c) == seen.end()) {
+      nextHyp.emplace_back(std::move(c));
+      seen.emplace(&nextHyp.back());
+    }
     candidates_.pop();
   }
 }
