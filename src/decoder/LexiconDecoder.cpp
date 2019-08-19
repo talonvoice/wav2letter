@@ -122,19 +122,11 @@ void LexiconDecoder::dumpBeams() {
   // as in, Nframe_beamindex
   // where N0_0 is the best beam of timestep 0
 
-  std::string indent = "  ";
-  // write labels
-  for (int t = 0; t < hyp_.size(); t++) {
-    const auto& frame = hyp_[t];
-    for (int beam = 0; beam < frame.size(); beam++) {
-      const auto& state = frame[beam];
-      std::string label = token_lookup.substr(state.getToken(), 1);
-      outfile << indent <<
-        "N" << t << "_" << beam << "[label=\"" << label << "\"]\n";
-    }
-  }
-  outfile << "\n";
+  // this set tracks linked nodes, with outbound edges, which makes them not "dead ends"
+  // we need to know about dead ends so we can color them red
+  std::unordered_set<const LexiconDecoderState *> linked;
 
+  std::string indent = "  ";
   // write horizontal edges
   for (int t = 1; t < hyp_.size(); t++) {
     const auto& prevFrame = hyp_[t-1];
@@ -145,6 +137,7 @@ void LexiconDecoder::dumpBeams() {
       stateToIndex[&prevFrame[i]] = i;
     }
     for (int beam = 0; beam < frame.size(); beam++) {
+      linked.insert(frame[beam].parent);
       int parent = stateToIndex[frame[beam].parent];
       outfile << indent
         << "N" << t-1 << "_" << parent << " -> "
@@ -152,6 +145,23 @@ void LexiconDecoder::dumpBeams() {
     }
   }
   outfile << "\n";
+
+  // write labels
+  for (int t = 0; t < hyp_.size(); t++) {
+    const auto& frame = hyp_[t];
+    for (int beam = 0; beam < frame.size(); beam++) {
+      const auto& state = frame[beam];
+      std::string label = token_lookup.substr(state.getToken(), 1);
+      outfile << indent <<
+        "N" << t << "_" << beam << "[label=\"" << label << "\"";
+
+      // mark dead ends as read
+      if (linked.find(&state) == linked.end()) {
+        outfile << ", color=\"red\"";
+      }
+      outfile << "]\n";
+    }
+  }
 
   // write vertical ranks
   for (int t = 0; t < hyp_.size(); t++) {
@@ -169,7 +179,6 @@ void LexiconDecoder::dumpBeams() {
   // write horizontal/vertical matrix edges
   outfile << indent << "node[style=invis]\n";
   outfile << indent << "edge[style=invis]\n";
-
   // vertical matrix edges
   for (int t = 0; t < hyp_.size(); t++) {
     const auto& prevHyp = hyp_[t];
@@ -188,6 +197,9 @@ void LexiconDecoder::dumpBeams() {
       outfile << " -> " << "N" << t << "_" << beam;
     }
   }
+  outfile << "\n";
+
+  // write footer
   outfile << dot_footer;
   //// end dotfile writer
 }
