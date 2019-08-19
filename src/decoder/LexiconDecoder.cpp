@@ -6,13 +6,16 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <algorithm>
+#include <cmath>
 #include <float.h>
+#include <fstream>
+#include <functional>
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <algorithm>
-#include <cmath>
-#include <functional>
+#include <string>
 #include <unordered_map>
 
 #include "decoder/LexiconDecoder.h"
@@ -61,7 +64,110 @@ void LexiconDecoder::decodeBegin() {
   nPrunedFrames_ = 0;
 }
 
+static std::string dot_header(R"(digraph beam {
+  rankdir=LR
+  splines=false
+  node[shape=box, style=rounded]
+  edge[arrowhead=none, headport=w, tailport=e]
+)");
+static std::string dot_footer("}");
+static std::string token_lookup("|'abcdefghijklmnopqrstuvwxyz");
+
+void LexiconDecoder::dumpBeams() {
+  //// write dotfile of all decoder beams
+  // dot -Tpng -o graph.png graph.dot
+
+  // pick first free graph-%d.dot filename and open for writing
+  int64_t i = 0;
+  std::string name = "";
+  while (true) {
+    name = "graph-" + std::to_string(i++) + ".dot";
+    std::ifstream f(name);
+    if (!f.good()) {
+      break;
+    }
+  }
+  std::ofstream outfile(name);
+  std::cout << "writing: " << name << std::endl;
+
+  outfile << dot_header;
+
+  // nodes are named N0_0
+  // as in, Nframe_beamindex
+  // where N0_0 is the best beam of timestep 0
+
+  std::string indent = "  ";
+  // write labels
+  for (int t = 0; t < hyp_.size(); t++) {
+    const auto& frame = hyp_[t];
+    for (int beam = 0; beam < frame.size(); beam++) {
+      const auto& state = frame[beam];
+      std::string label = token_lookup.substr(state.getToken(), 1);
+      outfile << indent <<
+        "N" << t << "_" << beam << "[label=\"" << label << "\"]\n";
+    }
+  }
+  outfile << "\n";
+
+  // write horizontal edges
+  for (int t = 1; t < hyp_.size(); t++) {
+    const auto& prevFrame = hyp_[t-1];
+    const auto& frame = hyp_[t];
+
+    std::unordered_map<const LexiconDecoderState *, int> stateToIndex;
+    for (int i = 0; i < prevFrame.size(); i++) {
+      stateToIndex[&prevFrame[i]] = i;
+    }
+    for (int beam = 0; beam < frame.size(); beam++) {
+      int parent = stateToIndex[frame[beam].parent];
+      outfile << indent
+        << "N" << t-1 << "_" << parent << " -> "
+        << "N" << t   << "_" << beam   << "\n";
+    }
+  }
+  outfile << "\n";
+
+  // write vertical ranks
+  for (int t = 0; t < hyp_.size(); t++) {
+    const auto& prevHyp = hyp_[t];
+    if (prevHyp.size() > 0) {
+      outfile << indent << "{ rank = same; ";
+      for (int beam = 0; beam < prevHyp.size(); beam++) {
+        outfile << "N" << t << "_" << beam << "; ";
+      }
+      outfile << "}\n";
+    }
+  }
+  outfile << "\n";
+
+  // write horizontal/vertical matrix edges
+  outfile << indent << "node[style=invis]\n";
+  outfile << indent << "edge[style=invis]\n";
+
+  // vertical matrix edges
+  for (int t = 0; t < hyp_.size(); t++) {
+    const auto& prevHyp = hyp_[t];
+    if (prevHyp.size() > 0) {
+      outfile << indent << "N" << t << "_" << 0;
+      for (int beam = 1; beam < prevHyp.size(); beam++) {
+        outfile << " -> " << "N" << t << "_" << beam;
+      }
+      outfile << "\n";
+    }
+  }
+  // horizontal matrix edges
+  for (int beam = 0; beam < opt_.beamSize; beam++) {
+    outfile << indent << "N" << 0 << "_" << beam;
+    for (int t = 1; t < hyp_.size(); t++) {
+      outfile << " -> " << "N" << t << "_" << beam;
+    }
+  }
+  outfile << dot_footer;
+  //// end dotfile writer
+}
+
 void LexiconDecoder::decodeEnd() {
+  dumpBeams();
   candidatesReset();
   for (const LexiconDecoderState& prevHyp :
        hyp_[nDecodedFrames_ - nPrunedFrames_]) {

@@ -126,6 +126,8 @@ class LexiconDecoder : public Decoder {
 
   void decodeEnd() override;
 
+  void dumpBeams();
+
   int nHypothesis() const;
 
   int nDecodedFramesInBuffer() const;
