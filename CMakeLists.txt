@@ -240,4 +240,9 @@ target_link_libraries(
 
 # ----------------------------- libw2l -----------------------------
 add_library(w2l w2l.cpp)
+set_target_properties(
+  w2l
+  PROPERTIES
+  CXX_STANDARD 14
+  )
 target_link_libraries(w2l wav2letter++)

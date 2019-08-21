@@ -17,12 +17,15 @@
 #include "runtime/Logger.h"
 #include "runtime/Serial.h"
 #include "decoder/Decoder.h"
+#include "decoder/Utils.h"
 #include "decoder/Trie.h"
 #include "decoder/WordLMDecoder.h"
 #include "decoder/TokenLMDecoder.h"
 #include "lm/KenLM.h"
 
 #include "w2l.h"
+
+#include "simpledecoder.cpp"
 
 using namespace w2l;
 
@@ -264,14 +267,13 @@ public:
             criterionType);
 
         auto transition = afToVector<float>(engine->criterion->param(0).array());
-        decoder.reset(new WordLMDecoder(
+        decoder.reset(new SimpleDecoder{
             decoderOpt,
             trie,
             lm,
             silIdx,
-            blankIdx,
             wordDict.getIndex(kUnkToken),
-            transition));
+            transition});
     }
     ~WrapDecoder() {}
 
@@ -284,15 +286,16 @@ public:
         std::vector<float> score;
         std::vector<std::vector<int>> wordPredictions;
         std::vector<std::vector<int>> letterPredictions;
-        auto results = decoder->decode(emissionVec.data(), T, N);
-        auto rawWordPrediction = validateIdx(results[0].words, wordDict.getIndex(kUnkToken));
+        //auto result = decoder->normal(emissionVec.data(), T, N);
+        auto result = decoder->groupThreading(emissionVec.data(), T, N);
+        auto rawWordPrediction = validateIdx(result.words, wordDict.getIndex(kUnkToken));
         auto wordPrediction = wrdIdx2Wrd(rawWordPrediction, wordDict);
         auto words = join(" ", wordPrediction);
         return strdup(words.c_str());
     }
 
     std::shared_ptr<KenLM> lm;
-    std::unique_ptr<Decoder> decoder;
+    std::unique_ptr<SimpleDecoder> decoder;
     Dictionary wordDict;
     DecoderOptions decoderOpt;
 };
