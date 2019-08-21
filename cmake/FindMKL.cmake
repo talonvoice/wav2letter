@@ -141,6 +141,7 @@ MACRO(CHECK_ALL_LIBRARIES LIBRARIES _name _list _flags)
     SET(CMAKE_REQUIRED_LIBRARIES)
     MARK_AS_ADVANCED(${_prefix}${_combined_name}_WORKS)
     SET(_libraries_work ${${_prefix}${_combined_name}_WORKS})
+    SET(_libraries_work "FOUND_OVERRIDE")
   ENDIF(_libraries_work)
   # Fin
   IF(_libraries_work)
