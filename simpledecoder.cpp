@@ -133,6 +133,19 @@ struct DefaultHooks
 };
 DefaultHooks defaultBeamSearchHooks;
 
+struct CommandModel
+{
+    struct Node
+    {
+        bool allowLanguage;
+        const TrieNode *next;
+    };
+
+    size_t firstIdx;
+    std::shared_ptr<Trie> tries; // should have multiple roots
+    std::unordered_map<size_t, Node> nodes; // map word idx to what comes after
+};
+
 struct BeamSearch
 {
     DecoderOptions opt_;
@@ -142,6 +155,7 @@ struct BeamSearch
     int sil_;
     int unk_;
     int nTokens_;
+    const CommandModel &commands_;
 
     struct Result
     {
@@ -180,10 +194,10 @@ auto BeamSearch::run(const float *emissions,
         while (auto hypIt = range()) {
             const auto &prevHyp = *hypIt;
             const TrieNode* prevLex = prevHyp.lex;
-            const int prevIdx = prevLex->idx;
-            const float lexMaxScore =
-                    prevLex == lexicon_->getRoot() ? 0 : prevLex->maxScore;
             const LMStatePtr& prevLmState = prevHyp.lmState;
+            const int prevIdx = prevLex->idx;
+            const float prevMaxScore =
+                    prevLex == lexicon_->getRoot() ? 0 : prevLex->maxScore; // just set root->maxScore to 0!
 
             /* (1) Try children */
             for (auto& child : prevLex->children) {
@@ -207,7 +221,7 @@ auto BeamSearch::run(const float *emissions,
                             prevLmState,
                             lex.get(),
                             &prevHyp,
-                            score + opt_.lmWeight * (lex->maxScore - lexMaxScore),
+                            score + opt_.lmWeight * (lex->maxScore - prevMaxScore),
                             n,
                             -1
                             );
@@ -215,18 +229,72 @@ auto BeamSearch::run(const float *emissions,
 
                 // If we got a true word
                 for (int i = 0; i < lex->nLabel; i++) {
-                    auto lmScoreReturn = lm_->score(prevLmState, lex->label[i]);
-                    beamSearchNewCandidate(
-                            candidates,
-                            candidatesBestScore,
-                            opt_.beamThreshold,
-                            lmScoreReturn.first,
-                            lexicon_->getRoot(),
-                            &prevHyp,
-                            score + opt_.lmWeight * (lmScoreReturn.second - lexMaxScore) + opt_.wordScore,
-                            n,
-                            lex->label[i]
-                            );
+                    // could be a command word or a language word
+                    const bool wasCommand = lex->label[i] >= commands_.firstIdx;
+                    if (wasCommand) {
+                        auto &command = commands_.nodes.at(lex->label[i]);
+
+                        const float optCommandScore = 1.5;
+                        float commandLmScore = prevMaxScore; // not sure how we structure command-trie's maxScore yet
+                        float commandScore = score + opt_.lmWeight * (commandLmScore - prevMaxScore) + optCommandScore;
+
+                        if (command.allowLanguage) {
+                            beamSearchNewCandidate(
+                                    candidates,
+                                    candidatesBestScore,
+                                    opt_.beamThreshold,
+                                    prevLmState, // TODO: Reset kenlm state!
+                                    lexicon_->getRoot(),
+                                    &prevHyp,
+                                    commandScore,
+                                    n,
+                                    lex->label[i]
+                                    );
+                        }
+                        if (command.next) {
+                            // has a follow-up command trie (may be command root)
+                            beamSearchNewCandidate(
+                                    candidates,
+                                    candidatesBestScore,
+                                    opt_.beamThreshold,
+                                    prevLmState, // TODO: doesn't matter
+                                    command.next,
+                                    &prevHyp,
+                                    commandScore,
+                                    n,
+                                    lex->label[i]
+                                    );
+                        }
+                    } else {
+                        auto lmScoreReturn = lm_->score(prevLmState, lex->label[i]);
+                        float lscore = score + opt_.lmWeight * (lmScoreReturn.second - prevMaxScore) + opt_.wordScore;
+
+                        // Set up further language input
+                        beamSearchNewCandidate(
+                                candidates,
+                                candidatesBestScore,
+                                opt_.beamThreshold,
+                                lmScoreReturn.first,
+                                lexicon_->getRoot(),
+                                &prevHyp,
+                                lscore,
+                                n,
+                                lex->label[i]
+                                );
+
+                        // Allow command to follow
+                        beamSearchNewCandidate(
+                                candidates,
+                                candidatesBestScore,
+                                opt_.beamThreshold,
+                                lmScoreReturn.first, // TODO: doesn't matter
+                                commands_.tries->getRoot(),
+                                &prevHyp,
+                                lscore,
+                                n,
+                                lex->label[i]
+                                );
+                    }
                 }
 
                 // If we got an unknown word
@@ -239,14 +307,14 @@ auto BeamSearch::run(const float *emissions,
                             lmScoreReturn.first,
                             lexicon_->getRoot(),
                             &prevHyp,
-                            score + opt_.lmWeight * (lmScoreReturn.second - lexMaxScore) + opt_.unkScore,
+                            score + opt_.lmWeight * (lmScoreReturn.second - prevMaxScore) + opt_.unkScore,
                             n,
                             unk_
                             );
                 }
             }
 
-            /* (2) Try same lexicon node */
+            /* Try same lexicon node */
             {
                 int n = prevIdx;
                 float score = prevHyp.score + emissions[frame * nTokens_ + n];
@@ -286,6 +354,7 @@ struct SimpleDecoder
     int sil_;
     int unk_;
     std::vector<float> transitions_;
+    const CommandModel commands_;
 
     DecodeResult normal(const float *emissions,
                         const int frames,
@@ -310,7 +379,8 @@ auto SimpleDecoder::normal(const float *emissions,
 
     /* note: the lm reset itself with :start() */
     hyp[0].emplace_back(
-                lm_->start(0), lexicon_->getRoot(), nullptr, 0.0, sil_, -1);
+                lm_->start(0), commands_.tries->getRoot(), nullptr, 0.0, sil_, -1);
+//                lm_->start(0), lexicon_->getRoot(), nullptr, 0.0, sil_, -1);
 
     BeamSearch beamSearch{
         .opt_ = opt_,
@@ -320,6 +390,7 @@ auto SimpleDecoder::normal(const float *emissions,
         .sil_ = sil_,
         .unk_ = unk_,
         .nTokens_ = nTokens,
+        .commands_ = commands_,
     };
 
     auto beams = beamSearch.run(emissions, 0, frames, rangeAdapter(hyp[0]));
@@ -366,6 +437,7 @@ auto SimpleDecoder::groupThreading(const float *emissions,
             .sil_ = sil_,
             .unk_ = unk_,
             .nTokens_ = nTokens,
+            .commands_ = commands_,
         };
         beamSearch.opt_.beamSize /= 4;
 
@@ -453,6 +525,7 @@ auto SimpleDecoder::diversity(const float *emissions,
             .sil_ = sil_,
             .unk_ = unk_,
             .nTokens_ = nTokens,
+            .commands_ = commands_,
         };
         beamSearch.opt_.beamSize /= 4;
 

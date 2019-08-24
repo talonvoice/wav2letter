@@ -214,6 +214,16 @@ public:
         wordDict = createWordDict(lexicon);
         lm = std::make_shared<KenLM>(languageModelPath, wordDict);
 
+        // build an ad-hoc command lexicon based on the spellings in the real lexicon
+        size_t firstCommandIdx = wordDict.indexSize();
+        LexiconMap commandLexicon;
+        for (auto command : {"say", "air", "bat", "cap", "drum", "each", "fine", "gust", "harp", "sit", "jury", "crunch", "look", "made", "near", "odd", "pit", "quench", "red", "sun", "trap", "urge", "vest", "whale", "plex", "yank", "zip"}) {
+            std::string commandWord = std::string("COMMAND(") + command + ")";
+            std::cout << commandWord << std::endl;
+            commandLexicon[commandWord] = lexicon[command];
+            wordDict.addEntry(commandWord);
+        }
+
         // taken from Decode.cpp
         // Build Trie
         silIdx = engine->tokenDict.getIndex(kSilToken);
@@ -235,6 +245,17 @@ public:
             }
         }
 
+        // Build the command trie - if there was a real grammar there would be multiple roots
+        std::shared_ptr<Trie> commandTrie = std::make_shared<Trie>(engine->tokenDict.indexSize(), silIdx);
+        for (auto& it : commandLexicon) {
+            const std::string& word = it.first;
+            int usrIdx = wordDict.getIndex(word);
+            for (auto& tokens : it.second) {
+                auto tokensTensor = tkn2Idx(tokens, engine->tokenDict);
+                commandTrie->insert(tokensTensor, usrIdx, 1.0);
+            }
+        }
+
         // Smearing
         // TODO: smear mode argument?
         SmearingMode smear_mode = SmearingMode::MAX;
@@ -249,6 +270,17 @@ public:
         }
         */
         trie->smear(smear_mode);
+        commandTrie->smear(smear_mode);
+
+        CommandModel commandModel{
+            .firstIdx = firstCommandIdx,
+            .tries = commandTrie,
+        };
+        for (auto& it : commandLexicon) {
+            commandModel.nodes[wordDict.getIndex(it.first)] = { false, commandTrie->getRoot() }; // just allow more commands after commands
+        }
+        commandModel.nodes[wordDict.getIndex("COMMAND(say)")].allowLanguage = true;
+
 
         CriterionType criterionType = CriterionType::ASG;
         if (engine->criterionType == kCtcCriterion) {
@@ -275,7 +307,8 @@ public:
             lm,
             silIdx,
             wordDict.getIndex(kUnkToken),
-            transition});
+            transition,
+            commandModel});
     }
     ~WrapDecoder() {}
 
