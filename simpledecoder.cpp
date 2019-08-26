@@ -1,11 +1,17 @@
+#include "criterion/CriterionUtils.h"
+
 using namespace w2l;
 
 static std::string token_lookup("|'abcdefghijklmnopqrstuvwxyz");
 std::string toTokenString(const LexiconDecoderState *c)
 {
     std::string curlex;
-    for (auto it = c; it; it = it->parent)
-        curlex.insert(curlex.begin(), token_lookup[it->lex->idx]);
+    for (auto it = c; it; it = it->parent) {
+        if (it->getPrevBlank())
+            curlex.insert(curlex.begin(), '_');
+        else
+            curlex.insert(curlex.begin(), token_lookup[it->lex->idx]);
+    }
     return curlex;
 };
 
@@ -18,13 +24,14 @@ static void beamSearchNewCandidate(
         const LexiconDecoderState* parent,
         const float score,
         const int token,
-        const int word)
+        const int word,
+        const bool prevBlank = false)
 {
     if (score < bestScore - beamThreshold)
         return;
     bestScore = std::max(bestScore, score);
     candidates.emplace_back(
-            lmState, lex, parent, score, token, word, false);
+            lmState, lex, parent, score, token, word, prevBlank);
 }
 
 // used for making an unordered_set of LexiconDecoderStates based on their LMStatePtr
@@ -141,7 +148,7 @@ struct CommandModel
         const TrieNode *next;
     };
 
-    size_t firstIdx;
+    int firstIdx;
     std::shared_ptr<Trie> tries; // should have multiple roots
     std::unordered_map<size_t, Node> nodes; // map word idx to what comes after
 };
@@ -160,6 +167,7 @@ struct BeamSearch
     struct Result
     {
         std::vector<std::vector<LexiconDecoderState>> hyp;
+        std::vector<LexiconDecoderState> ends;
         float bestBeamScore;
     };
 
@@ -182,6 +190,9 @@ auto BeamSearch::run(const float *emissions,
     std::vector<std::vector<LexiconDecoderState>> hyp;
     hyp.resize(frames + 1, std::vector<LexiconDecoderState>());
 
+    std::vector<LexiconDecoderState> ends;
+    float endsBestScore = -INFINITY;
+
     std::vector<LexiconDecoderState> candidates;
     candidates.reserve(opt_.beamSize);
     float candidatesBestScore = kNegativeInfinity;
@@ -190,18 +201,35 @@ auto BeamSearch::run(const float *emissions,
         int frame = startFrame + t;
         candidates.clear();
 
+        float maxEmissionScore = -INFINITY;
+        int maxEmissionToken = -1;
+        for (int i = 0; i < nTokens_; ++i) {
+            float e = emissions[frame * nTokens_ + i];
+            if (e > maxEmissionScore) {
+                maxEmissionScore = e;
+                maxEmissionToken = i;
+            }
+        }
+        //std::cout << t << " " << token_lookup[maxToken] << ": " << maxWeight << ", sil: " << silEm << std::endl;
+
+        candidatesBestScore = kNegativeInfinity;
+
         auto range = t == 0 ? initialHyp : rangeAdapter(hyp[t]);
         while (auto hypIt = range()) {
             const auto &prevHyp = *hypIt;
             const TrieNode* prevLex = prevHyp.lex;
             const LMStatePtr& prevLmState = prevHyp.lmState;
-            const int prevIdx = prevLex->idx;
+            const int prevIdx = prevHyp.getToken();
+            bool hadIdenticalChild = false;
+
+            if (!prevHyp.getPrevBlank()) {
             const float prevMaxScore =
                     prevLex == lexicon_->getRoot() ? 0 : prevLex->maxScore; // just set root->maxScore to 0!
-
             /* (1) Try children */
             for (auto& child : prevLex->children) {
                 int n = child.first;
+                if (n == prevIdx)
+                    hadIdenticalChild = true;
                 const TrieNodePtr& lex = child.second;
                 float score = prevHyp.score + emissions[frame * nTokens_ + n];
                 if (frame > 0) {
@@ -238,33 +266,18 @@ auto BeamSearch::run(const float *emissions,
                         float commandLmScore = prevMaxScore; // not sure how we structure command-trie's maxScore yet
                         float commandScore = score + opt_.lmWeight * (commandLmScore - prevMaxScore) + optCommandScore;
 
-                        if (command.allowLanguage) {
-                            beamSearchNewCandidate(
-                                    candidates,
-                                    candidatesBestScore,
-                                    opt_.beamThreshold,
-                                    prevLmState, // TODO: Reset kenlm state!
-                                    lexicon_->getRoot(),
-                                    &prevHyp,
-                                    commandScore,
-                                    n,
-                                    lex->label[i]
-                                    );
-                        }
-                        if (command.next) {
-                            // has a follow-up command trie (may be command root)
-                            beamSearchNewCandidate(
-                                    candidates,
-                                    candidatesBestScore,
-                                    opt_.beamThreshold,
-                                    prevLmState, // TODO: doesn't matter
-                                    command.next,
-                                    &prevHyp,
-                                    commandScore,
-                                    n,
-                                    lex->label[i]
-                                    );
-                        }
+                        assert(lex->children.empty()); // no further exploration on this lex
+                        beamSearchNewCandidate(
+                                candidates,
+                                candidatesBestScore,
+                                opt_.beamThreshold,
+                                prevLmState, // TODO: Reset kenlm state!
+                                lex.get(),
+                                &prevHyp,
+                                commandScore,
+                                n,
+                                lex->label[i]
+                                );
                     } else {
                         auto lmScoreReturn = lm_->score(prevLmState, lex->label[i]);
                         float lscore = score + opt_.lmWeight * (lmScoreReturn.second - prevMaxScore) + opt_.wordScore;
@@ -313,15 +326,24 @@ auto BeamSearch::run(const float *emissions,
                             );
                 }
             }
+            }
 
             /* Try same lexicon node */
-            {
+            if (!hadIdenticalChild) {
                 int n = prevIdx;
                 float score = prevHyp.score + emissions[frame * nTokens_ + n];
                 if (frame > 0) {
                     score += transitions_[n * nTokens_ + prevIdx];
-                }
+                }                
+                bool blank = prevHyp.getPrevBlank() && n == sil_;
                 if (n == sil_) {
+                    float silEmission = emissions[frame * nTokens_ + n];
+                    if (!blank && silEmission < maxEmissionScore) {
+                        blank = true;
+                    } else if (blank && silEmission >= maxEmissionScore) {
+                        blank = false;
+                    }
+
                     score += opt_.silWeight;
                 }
                 score += hooks.extraNewTokenScore(frame, prevIdx, n);
@@ -335,7 +357,8 @@ auto BeamSearch::run(const float *emissions,
                         &prevHyp,
                         score,
                         n,
-                        -1
+                        -1,
+                        blank
                         );
             }
         }
@@ -343,7 +366,10 @@ auto BeamSearch::run(const float *emissions,
         beamSearchSelectBestCandidates(hyp[t + 1], candidates, candidatesBestScore - opt_.beamThreshold, lm_, opt_.beamSize);
     }
 
-    return Result{std::move(hyp), candidatesBestScore};
+    std::vector<LexiconDecoderState> filteredEnds;
+    beamSearchSelectBestCandidates(filteredEnds, ends, endsBestScore - opt_.beamThreshold, lm_, opt_.beamSize);
+
+    return Result{std::move(hyp), std::move(filteredEnds), candidatesBestScore};
 }
 
 struct SimpleDecoder
@@ -398,7 +424,7 @@ auto SimpleDecoder::normal(const float *emissions,
     std::vector<LexiconDecoderState> result;
     beamSearchFinish(result, beams.hyp.back(), lm_, opt_);
 
-    return getHypothesis(&result[0], frames + 1);
+    return getHypothesis(&result[0], beams.hyp.size());
 }
 
 auto SimpleDecoder::groupThreading(const float *emissions,

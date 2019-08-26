@@ -45,6 +45,8 @@ char *w2l_decoder_result_tokens(w2l_decoder *decoder, w2l_decoderesult *decodere
 void w2l_decoderesult_free(w2l_decoderesult *decoderesult);
 void w2l_decoder_free(w2l_decoder *decoder);
 
+char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

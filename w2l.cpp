@@ -217,10 +217,13 @@ public:
         // build an ad-hoc command lexicon based on the spellings in the real lexicon
         size_t firstCommandIdx = wordDict.indexSize();
         LexiconMap commandLexicon;
-        for (auto command : {"say", "air", "bat", "cap", "drum", "each", "fine", "gust", "harp", "sit", "jury", "crunch", "look", "made", "near", "odd", "pit", "quench", "red", "sun", "trap", "urge", "vest", "whale", "plex", "yank", "zip"}) {
+        for (auto command : {"say", "air", "bat", "cap", "drum", "each", "fine", "gust", "harp", "sit",
+                             "jury", "crunch", "look", "made", "near", "odd", "pit", "quench", "red", "sun",
+                             "trap", "urge", "vest", "whale", "plex", "yank", "zip"}) {
             std::string commandWord = std::string("COMMAND(") + command + ")";
+            std::vector<std::string> spelling = lexicon[command][0];
             std::cout << commandWord << std::endl;
-            commandLexicon[commandWord] = lexicon[command];
+            commandLexicon[commandWord] = {spelling};
             wordDict.addEntry(commandWord);
         }
 
@@ -252,7 +255,7 @@ public:
             int usrIdx = wordDict.getIndex(word);
             for (auto& tokens : it.second) {
                 auto tokensTensor = tkn2Idx(tokens, engine->tokenDict);
-                commandTrie->insert(tokensTensor, usrIdx, 1.0);
+                commandTrie->insert(tokensTensor, usrIdx, 0.0);
             }
         }
 
@@ -434,5 +437,117 @@ void w2l_decoder_free(w2l_decoder *decoder) {
     if (decoder)
         delete reinterpret_cast<WrapDecoder *>(decoder);
 }
+
+char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission) {
+    auto engineObj = reinterpret_cast<Engine *>(engine);
+    auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
+    auto rawEmission = reinterpret_cast<Emission *>(emission)->emission;
+
+    auto emissionVec = afToVector<float>(rawEmission);
+    int T = rawEmission.dims(0);
+    int N = rawEmission.dims(1);
+    auto transitions = afToVector<float>(engineObj->criterion->param(0).array());
+
+    auto emissionTransmissionScore = [&emissionVec, &transitions, T](const std::vector<int> &tokens, int from, int to) {
+        float score = 0.0;
+        for (int i = from; i < to; ++i) {
+            if (i > from) {
+                score += transitions[tokens[i] * T + tokens[i - 1]];
+            } else {
+                score += transitions[tokens[i] * T + 0]; // from silence
+            }
+            score += emissionVec[i * T + tokens[i]];
+        }
+        score += transitions[0 * T + tokens[to - 1]]; // to silence
+        return score;
+    };
+
+    auto tokensToString = [engineObj](const std::vector<int> &tokens, int from, int to) {
+        std::string out;
+        for (int i = from; i < to; ++i)
+            out.append(engineObj->tokenDict.getEntry(tokens[i]));
+        return out;
+    };
+
+    auto viterbiToks =
+        afToVector<int>(engineObj->criterion->viterbiPath(rawEmission.array()));
+    assert(N == viterbiToks.size());
+
+    int i = 0;
+    while (i < N) {
+        int viterbiSegStart = i;
+        while (i < N && viterbiToks[i] == 0)
+            ++i;
+
+        int viterbiWordStart = i;
+        while (i < N && viterbiToks[i] != 0)
+            ++i;
+        int viterbiWordEnd = i;
+
+        while (i < N && viterbiToks[i] == 0)
+            ++i;
+        int viterbiSegEnd = i;
+
+        // we now know the whole viterbi segment as well as where the word is
+        // now run the decode
+        // TODO: will need to carry over decoder state between calls
+        int decodeLen = viterbiSegEnd - viterbiSegStart;
+        auto decodeResult = decoderObj->decoder->normal(emissionVec.data() + viterbiSegStart * T, decodeLen, T);
+        auto decoderToks = decodeResult.tokens;
+        decoderToks.erase(decoderToks.begin()); // initial hyp token
+        std::vector<int> startSil(viterbiSegStart, 0);
+        decoderToks.insert(decoderToks.begin(), startSil.begin(), startSil.end());
+        decodeLen += viterbiSegStart;
+
+        int j = 0;
+        while (j < decodeLen && decoderToks[j] == 0)
+            ++j;
+        if (j == decodeLen)
+            continue;
+
+        int decodeWordStart = j;
+        while (j < decodeLen && decoderToks[j] != 0)
+            ++j;
+        int decodeWordEnd = j;
+
+        // we score the maximum range of the two non-silence areas
+        int scoreWordStart = std::min(viterbiWordStart, decodeWordStart);
+        int scoreWordEnd = std::max(viterbiWordEnd, decodeWordEnd);
+        // sometimes viterbi sees nothing ("air" -> "|||") but the decoder
+        // would see the word and the two's scores are relatively close
+        if (viterbiWordStart == viterbiWordEnd) {
+            scoreWordStart = decodeWordStart;
+            scoreWordEnd = decodeWordEnd;
+        }
+
+        i = std::min(scoreWordEnd + 2, N);
+
+        // the criterion for rejecting decodes is the decode-score / viterbi-score
+        // where the score is the emission-transmission score
+        float viterbiScore = emissionTransmissionScore(viterbiToks, scoreWordStart, scoreWordEnd);
+        float decoderScore = emissionTransmissionScore(decoderToks, scoreWordStart, scoreWordEnd);
+
+//        std::cout << "decoder: " << tokensToString(decoderToks, scoreWordStart, scoreWordEnd) << std::endl
+//                  << "viterbi: " << tokensToString(viterbiToks, scoreWordStart, scoreWordEnd) << std::endl
+//                  << "scores: " << decoderScore << " " << viterbiScore << " " << decoderScore / viterbiScore << std::endl;
+        if (decoderScore / viterbiScore < 0.9) {
+            continue;
+        }
+
+        // find the recognized word index
+        int outWord = -1;
+        // word decode is only written in first silence *after* the word
+        for (int j = scoreWordStart; j < std::min(scoreWordEnd + 1, viterbiSegEnd); ++j) {
+            outWord = decodeResult.words[1 + j - viterbiSegStart]; // +1 because of initial hyp
+            if (outWord != -1)
+                break;
+        }
+        if (outWord == -1)
+            continue;
+
+        std::cout << "final out: " << decoderObj->wordDict.getEntry(outWord) << std::endl;
+    }
+}
+
 
 } // extern "C"
