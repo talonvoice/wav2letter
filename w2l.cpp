@@ -208,13 +208,15 @@ private:
 class WrapDecoder {
 public:
     WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath, const w2l_decode_options *opts) {
+        tokenDict = engine->tokenDict;
+
         auto lexicon = loadWords(lexiconPath, -1);
         wordDict = createWordDict(lexicon);
         lm = std::make_shared<KenLM>(languageModelPath, wordDict);
 
         // taken from Decode.cpp
         // Build Trie
-        int silIdx = engine->tokenDict.getIndex(kSilToken);
+        silIdx = engine->tokenDict.getIndex(kSilToken);
         int blankIdx = engine->criterionType == kCtcCriterion ? engine->tokenDict.getIndex(kBlankToken) : -1;
         std::shared_ptr<Trie> trie = std::make_shared<Trie>(engine->tokenDict.indexSize(), silIdx);
         auto startState = lm->start(false);
@@ -277,7 +279,7 @@ public:
     }
     ~WrapDecoder() {}
 
-    char *decode(Emission *emission) {
+    DecodeResult decode(Emission *emission) {
         auto rawEmission = emission->emission;
         auto emissionVec = afToVector<float>(rawEmission);
         int N = rawEmission.dims(0);
@@ -287,17 +289,37 @@ public:
         std::vector<std::vector<int>> wordPredictions;
         std::vector<std::vector<int>> letterPredictions;
         //auto result = decoder->normal(emissionVec.data(), T, N);
-        auto result = decoder->groupThreading(emissionVec.data(), T, N);
+        return decoder->groupThreading(emissionVec.data(), T, N);
+    }
+
+    char *resultWords(const DecodeResult &result) {
         auto rawWordPrediction = validateIdx(result.words, wordDict.getIndex(kUnkToken));
         auto wordPrediction = wrdIdx2Wrd(rawWordPrediction, wordDict);
         auto words = join(" ", wordPrediction);
         return strdup(words.c_str());
     }
 
+    char *resultTokens(const DecodeResult &result) {
+        auto tknIdx = result.tokens;
+
+        // ends with a -1 token, make into silence instead
+        // tknIdx2Ltr will filter out the first and last if they are silences
+        if (tknIdx.size() > 0 && tknIdx.back() == -1)
+           tknIdx.back() = silIdx;
+
+        auto tknLtrs = tknIdx2Ltr(tknIdx, tokenDict);
+        std::string out;
+        for (const auto &ltr : tknLtrs)
+            out.append(ltr);
+        return strdup(out.c_str());
+    }
+
     std::shared_ptr<KenLM> lm;
     std::unique_ptr<SimpleDecoder> decoder;
     Dictionary wordDict;
+    Dictionary tokenDict;
     DecoderOptions decoderOpt;
+    int silIdx;
 };
 
 extern "C" {
@@ -305,6 +327,7 @@ extern "C" {
 typedef struct w2l_engine w2l_engine;
 typedef struct w2l_decoder w2l_decoder;
 typedef struct w2l_emission w2l_emission;
+typedef struct w2l_decoderesult w2l_decoderesult;
 
 w2l_engine *w2l_engine_new(const char *acoustic_model_path, const char *tokens_path) {
     // TODO: what other engine config do I need?
@@ -345,8 +368,26 @@ w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, c
     return reinterpret_cast<w2l_decoder *>(decoder);
 }
 
-char *w2l_decoder_decode(w2l_decoder *decoder, w2l_emission *emission) {
-    return reinterpret_cast<WrapDecoder *>(decoder)->decode(reinterpret_cast<Emission *>(emission));
+w2l_decoderesult *w2l_decoder_decode(w2l_decoder *decoder, w2l_emission *emission) {
+    auto result = new DecodeResult(reinterpret_cast<WrapDecoder *>(decoder)->decode(reinterpret_cast<Emission *>(emission)));
+    return reinterpret_cast<w2l_decoderesult *>(result);
+}
+
+char *w2l_decoder_result_words(w2l_decoder *decoder, w2l_decoderesult *decoderesult) {
+    auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
+    auto result = reinterpret_cast<DecodeResult *>(decoderesult);
+    return decoderObj->resultWords(*result);
+}
+
+char *w2l_decoder_result_tokens(w2l_decoder *decoder, w2l_decoderesult *decoderesult) {
+    auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
+    auto result = reinterpret_cast<DecodeResult *>(decoderesult);
+    return decoderObj->resultTokens(*result);
+}
+
+void w2l_decoderesult_free(w2l_decoderesult *decoderesult) {
+    if (decoderesult)
+        delete reinterpret_cast<DecodeResult *>(decoderesult);
 }
 
 void w2l_decoder_free(w2l_decoder *decoder) {

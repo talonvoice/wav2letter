@@ -6,6 +6,7 @@ extern "C" {
 
 typedef struct w2l_engine w2l_engine;
 typedef struct w2l_decoder w2l_decoder;
+typedef struct w2l_decoderesult w2l_decoderesult;
 typedef struct w2l_emission w2l_emission;
 
 typedef struct {
@@ -37,7 +38,10 @@ char *w2l_emission_text(w2l_emission *emission);
 void w2l_emission_free(w2l_emission *emission);
 
 w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const w2l_decode_options *opts);
-char *w2l_decoder_decode(w2l_decoder *decoder, w2l_emission *emission);
+w2l_decoderesult *w2l_decoder_decode(w2l_decoder *decoder, w2l_emission *emission);
+char *w2l_decoder_result_words(w2l_decoder *decoder, w2l_decoderesult *decoderesult);
+char *w2l_decoder_result_tokens(w2l_decoder *decoder, w2l_decoderesult *decoderesult);
+void w2l_decoderesult_free(w2l_decoderesult *decoderesult);
 void w2l_decoder_free(w2l_decoder *decoder);
 
 #ifdef __cplusplus
