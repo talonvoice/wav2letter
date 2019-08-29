@@ -288,8 +288,8 @@ public:
         std::vector<float> score;
         std::vector<std::vector<int>> wordPredictions;
         std::vector<std::vector<int>> letterPredictions;
-        //auto result = decoder->normal(emissionVec.data(), T, N);
-        return decoder->groupThreading(emissionVec.data(), T, N);
+        return decoder->normal(emissionVec.data(), T, N);
+        //return decoder->groupThreading(emissionVec.data(), T, N);
     }
 
     char *resultWords(const DecodeResult &result) {
@@ -350,11 +350,18 @@ void w2l_engine_free(w2l_engine *engine) {
 }
 
 char *w2l_emission_text(w2l_emission *emission) {
-    // TODO: I think w2l_emission needs a pointer to the criterion to do viterbiPath
-    //       I could just use a shared_ptr to just the criterion and not point emission -> engine
-    //       so I'm not passing a raw shared_ptr back from C the api
-    // TODO: do a viterbiPath here
     return reinterpret_cast<Emission *>(emission)->text();
+}
+
+float *w2l_emission_values(w2l_emission *emission, int *frames, int *tokens) {
+    auto em = reinterpret_cast<Emission *>(emission);
+    auto data = afToVector<float>(em->emission.array());
+    *frames = em->emission.array().dims(1);
+    *tokens = em->emission.array().dims(0);
+    int datasize = sizeof(float) * *frames * *tokens;
+    float *out = static_cast<float *>(malloc(datasize));
+    memcpy(out, data.data(), datasize);
+    return out;
 }
 
 void w2l_emission_free(w2l_emission *emission) {

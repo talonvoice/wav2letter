@@ -35,6 +35,7 @@ bool w2l_engine_export(w2l_engine *engine, const char *path);
 void w2l_engine_free(w2l_engine *engine);
 
 char *w2l_emission_text(w2l_emission *emission);
+float *w2l_emission_values(w2l_emission *emission, int *frames, int *tokens);
 void w2l_emission_free(w2l_emission *emission);
 
 w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const w2l_decode_options *opts);
