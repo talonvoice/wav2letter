@@ -441,6 +441,7 @@ void w2l_decoder_free(w2l_decoder *decoder) {
 char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission) {
     auto engineObj = reinterpret_cast<Engine *>(engine);
     auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
+    auto &commands = decoderObj->decoder->commands_;
     auto rawEmission = reinterpret_cast<Emission *>(emission)->emission;
 
     auto emissionVec = afToVector<float>(rawEmission);
@@ -473,6 +474,9 @@ char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission
         afToVector<int>(engineObj->criterion->viterbiPath(rawEmission.array()));
     assert(N == viterbiToks.size());
 
+    auto commandState = commands.tries->getRoot();
+    std::vector<int> languageDecode;
+
     int i = 0;
     while (i < N) {
         int viterbiSegStart = i;
@@ -483,6 +487,7 @@ char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission
         while (i < N && viterbiToks[i] != 0)
             ++i;
         int viterbiWordEnd = i;
+        // it's ok if wordStart == wordEnd, maybe the decoder sees something
 
         while (i < N && viterbiToks[i] == 0)
             ++i;
@@ -492,7 +497,7 @@ char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission
         // now run the decode
         // TODO: will need to carry over decoder state between calls
         int decodeLen = viterbiSegEnd - viterbiSegStart;
-        auto decodeResult = decoderObj->decoder->normal(emissionVec.data() + viterbiSegStart * T, decodeLen, T);
+        auto decodeResult = decoderObj->decoder->normal(emissionVec.data() + viterbiSegStart * T, decodeLen, T, commandState);
         auto decoderToks = decodeResult.tokens;
         decoderToks.erase(decoderToks.begin()); // initial hyp token
         std::vector<int> startSil(viterbiSegStart, 0);
@@ -502,25 +507,28 @@ char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission
         int j = 0;
         while (j < decodeLen && decoderToks[j] == 0)
             ++j;
-        if (j == decodeLen)
-            continue;
 
         int decodeWordStart = j;
         while (j < decodeLen && decoderToks[j] != 0)
             ++j;
         int decodeWordEnd = j;
+        // Again it's ok if wordStart == wordEnd, need to process anyway.
+        // Maybe we are in language mode and need to emit those words?
 
         // we score the maximum range of the two non-silence areas
         int scoreWordStart = std::min(viterbiWordStart, decodeWordStart);
         int scoreWordEnd = std::max(viterbiWordEnd, decodeWordEnd);
-        // sometimes viterbi sees nothing ("air" -> "|||") but the decoder
-        // would see the word and the two's scores are relatively close
         if (viterbiWordStart == viterbiWordEnd) {
             scoreWordStart = decodeWordStart;
             scoreWordEnd = decodeWordEnd;
         }
+        if (decodeWordStart == decodeWordEnd) {
+            scoreWordStart = viterbiWordStart;
+            scoreWordEnd = viterbiWordEnd;
+        }
 
         i = std::min(scoreWordEnd + 2, N);
+        //std::cout << viterbiSegStart << " " << i << " " << viterbiSegEnd << std::endl;
 
         // the criterion for rejecting decodes is the decode-score / viterbi-score
         // where the score is the emission-transmission score
@@ -530,22 +538,51 @@ char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission
 //        std::cout << "decoder: " << tokensToString(decoderToks, scoreWordStart, scoreWordEnd) << std::endl
 //                  << "viterbi: " << tokensToString(viterbiToks, scoreWordStart, scoreWordEnd) << std::endl
 //                  << "scores: " << decoderScore << " " << viterbiScore << " " << decoderScore / viterbiScore << std::endl;
-        if (decoderScore / viterbiScore < 0.9) {
-            continue;
-        }
 
         // find the recognized word index
         int outWord = -1;
         // word decode is only written in first silence *after* the word
-        for (int j = scoreWordStart; j < std::min(scoreWordEnd + 1, viterbiSegEnd); ++j) {
+        for (int j = scoreWordStart; j < std::min(i, viterbiSegEnd); ++j) {
             outWord = decodeResult.words[1 + j - viterbiSegStart]; // +1 because of initial hyp
             if (outWord != -1)
                 break;
         }
-        if (outWord == -1)
-            continue;
+        if (decoderScore / viterbiScore < 0.9 || outWord == -1) {
+            // While in language mode, emit language words if there is no command
+            if (!languageDecode.empty()) {
+                for (int j = viterbiSegStart; j < i; ++j) {
+                    if (languageDecode[j] != -1)
+                        std::cout << decoderObj->wordDict.getEntry(languageDecode[j]) << std::endl;
+                }
+            }
 
-        std::cout << "final out: " << decoderObj->wordDict.getEntry(outWord) << std::endl;
+            continue;
+        }
+
+        std::cout << decoderObj->wordDict.getEntry(outWord) << std::endl;
+
+        if (outWord < commands.firstIdx) {
+            std::cout << "non-command while command decoding" << std::endl;
+            continue;
+        }
+
+        auto nextCommand = commands.nodes.find(outWord);
+        if (nextCommand == commands.nodes.end()) {
+            std::cout << "command next step while decoding" << std::endl;
+            continue;
+        }
+
+        commandState = nextCommand->second.next;
+
+        if (nextCommand->second.allowLanguage) {
+            // do a language decode and store the results
+            auto languageResult = decoderObj->decoder->normal(emissionVec.data() + i * T, N - i, T);
+            languageDecode = std::vector<int>(i, 0);
+            languageDecode.insert(languageDecode.end(), languageResult.words.begin() + 1, languageResult.words.end());
+            //std::cout << "lang decode: " << tokensToString(languageResult.tokens, 1, languageResult.tokens.size() - 1) << std::endl;
+        } else {
+            languageDecode.clear();
+        }
     }
 }
 

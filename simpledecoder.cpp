@@ -384,7 +384,8 @@ struct SimpleDecoder
 
     DecodeResult normal(const float *emissions,
                         const int frames,
-                        const int nTokens) const;
+                        const int nTokens,
+                        const TrieNode *startTrie = nullptr) const;
 
     DecodeResult groupThreading(const float *emissions,
                                 const int frames,
@@ -397,16 +398,18 @@ struct SimpleDecoder
 
 auto SimpleDecoder::normal(const float *emissions,
                            const int frames,
-                           const int nTokens) const
+                           const int nTokens,
+                           const TrieNode *startTrie) const
     -> DecodeResult
 {
     std::vector<std::vector<LexiconDecoderState>> hyp;
     hyp.resize(1);
 
     /* note: the lm reset itself with :start() */
+    if (!startTrie)
+        startTrie = lexicon_->getRoot();
     hyp[0].emplace_back(
-                lm_->start(0), commands_.tries->getRoot(), nullptr, 0.0, sil_, -1);
-//                lm_->start(0), lexicon_->getRoot(), nullptr, 0.0, sil_, -1);
+                lm_->start(0), startTrie, nullptr, 0.0, sil_, -1);
 
     BeamSearch beamSearch{
         .opt_ = opt_,
