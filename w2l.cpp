@@ -209,6 +209,7 @@ class WrapDecoder {
 public:
     WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath, const w2l_decode_options *opts) {
         tokenDict = engine->tokenDict;
+        silIdx = tokenDict.getIndex(kSilToken);
 
         auto lexicon = loadWords(lexiconPath, -1);
         wordDict = createWordDict(lexicon);
@@ -227,25 +228,57 @@ public:
             wordDict.addEntry(commandWord);
         }
 
-        // taken from Decode.cpp
-        // Build Trie
-        silIdx = engine->tokenDict.getIndex(kSilToken);
-        int blankIdx = engine->criterionType == kCtcCriterion ? engine->tokenDict.getIndex(kBlankToken) : -1;
-        std::shared_ptr<Trie> trie = std::make_shared<Trie>(engine->tokenDict.indexSize(), silIdx);
-        auto startState = lm->start(false);
-        for (auto& it : lexicon) {
-            const std::string& word = it.first;
-            int usrIdx = wordDict.getIndex(word);
-            float score = -1;
-            // if (FLAGS_decodertype == "wrd") {
-            if (true) {
-                LMStatePtr dummyState;
-                std::tie(dummyState, score) = lm->score(startState, usrIdx);
+        // Load the trie: either the flattened cache from disk, or recreate from the lexicon
+        FlatTriePtr flatTrie;
+        std::string flatTriePath = std::string(lexiconPath) + ".flattrie";
+        std::ifstream flatTrieIn(flatTriePath.c_str());
+        if (!flatTrieIn.good()) {
+            // taken from Decode.cpp
+            // Build Trie
+            int blankIdx = engine->criterionType == kCtcCriterion ? engine->tokenDict.getIndex(kBlankToken) : -1;
+            std::shared_ptr<Trie> trie = std::make_shared<Trie>(engine->tokenDict.indexSize(), silIdx);
+            auto startState = lm->start(false);
+            for (auto& it : lexicon) {
+                const std::string& word = it.first;
+                int usrIdx = wordDict.getIndex(word);
+                float score = -1;
+                // if (FLAGS_decodertype == "wrd") {
+                if (true) {
+                    LMStatePtr dummyState;
+                    std::tie(dummyState, score) = lm->score(startState, usrIdx);
+                }
+                for (auto& tokens : it.second) {
+                    auto tokensTensor = tkn2Idx(tokens, engine->tokenDict);
+                    trie->insert(tokensTensor, usrIdx, score);
+                }
             }
-            for (auto& tokens : it.second) {
-                auto tokensTensor = tkn2Idx(tokens, engine->tokenDict);
-                trie->insert(tokensTensor, usrIdx, score);
+
+            // Smearing
+            // TODO: smear mode argument?
+            SmearingMode smear_mode = SmearingMode::MAX;
+            /*
+            SmearingMode smear_mode = SmearingMode::NONE;
+            if (FLAGS_smearing == "logadd") {
+                smear_mode = SmearingMode::LOGADD;
+            } else if (FLAGS_smearing == "max") {
+                smear_mode = SmearingMode::MAX;
+            } else if (FLAGS_smearing != "none") {
+                LOG(FATAL) << "[Decoder] Invalid smearing mode: " << FLAGS_smearing;
             }
+            */
+            trie->smear(smear_mode);
+
+            flatTrie = std::make_shared<FlatTrie>(toFlatTrie(trie->getRoot()));
+            std::ofstream out(flatTriePath.c_str());
+            size_t byteSize = 4 * flatTrie->storage.size();
+            out << byteSize;
+            out.write(reinterpret_cast<const char*>(flatTrie->storage.data()), byteSize);
+        } else {
+            flatTrie = std::make_shared<FlatTrie>();
+            size_t byteSize;
+            flatTrieIn >> byteSize;
+            flatTrie->storage.resize(byteSize / 4);
+            flatTrieIn.read(reinterpret_cast<char *>(flatTrie->storage.data()), byteSize);
         }
 
         // Build the command trie - if there was a real grammar there would be multiple roots
@@ -258,29 +291,15 @@ public:
                 commandTrie->insert(tokensTensor, usrIdx, 0.0);
             }
         }
-
-        // Smearing
-        // TODO: smear mode argument?
-        SmearingMode smear_mode = SmearingMode::MAX;
-        /*
-        SmearingMode smear_mode = SmearingMode::NONE;
-        if (FLAGS_smearing == "logadd") {
-            smear_mode = SmearingMode::LOGADD;
-        } else if (FLAGS_smearing == "max") {
-            smear_mode = SmearingMode::MAX;
-        } else if (FLAGS_smearing != "none") {
-            LOG(FATAL) << "[Decoder] Invalid smearing mode: " << FLAGS_smearing;
-        }
-        */
-        trie->smear(smear_mode);
-        commandTrie->smear(smear_mode);
+        commandTrie->smear(SmearingMode::MAX);
+        auto flatCommandTrie = std::make_shared<FlatTrie>(toFlatTrie(commandTrie->getRoot()));
 
         CommandModel commandModel{
             .firstIdx = firstCommandIdx,
-            .tries = commandTrie,
+            .tries = flatCommandTrie,
         };
         for (auto& it : commandLexicon) {
-            commandModel.nodes[wordDict.getIndex(it.first)] = { false, commandTrie->getRoot() }; // just allow more commands after commands
+            commandModel.nodes[wordDict.getIndex(it.first)] = { false, flatCommandTrie->getRoot() }; // just allow more commands after commands
         }
         commandModel.nodes[wordDict.getIndex("COMMAND(say)")].allowLanguage = true;
 
@@ -306,7 +325,7 @@ public:
         auto transition = afToVector<float>(engine->criterion->param(0).array());
         decoder.reset(new SimpleDecoder{
             decoderOpt,
-            trie,
+            flatTrie,
             lm,
             silIdx,
             wordDict.getIndex(kUnkToken),
