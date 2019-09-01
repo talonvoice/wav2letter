@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <iostream>
 #include <limits>
+#include <functional>
 
 #include "decoder/Trie.h"
 
@@ -97,6 +98,49 @@ void Trie::smear(SmearingMode smearMode) {
   if (smearMode != SmearingMode::NONE) {
     smearNode(root_, smearMode);
   }
+}
+
+FlatTrie toFlatTrie(const TrieNode *root)
+{
+    std::vector<int32_t> out;
+    std::unordered_map<const TrieNode *, size_t> zeroOffsets;
+
+    // All fields have size 4; number of fields needed
+    auto flatTrieNodeN = [](const TrieNode *node)
+    {
+        return 4 + node->children.size() + node->label.size();
+    };
+
+    std::function<void (const TrieNode *)> allocAndMap;
+    allocAndMap = [&](const TrieNode *node) {
+        zeroOffsets[node] = out.size();
+        out.resize(out.size() + flatTrieNodeN(node));
+
+        for (const auto &child : node->children)
+            allocAndMap(child.second.get());
+    };
+    allocAndMap(root);
+
+    std::function<void (const TrieNode *)> writeData;
+    writeData = [&](const TrieNode *node) {
+        auto thisOffset = zeroOffsets[node];
+        auto flat = reinterpret_cast<FlatTrieNode *>(&out[thisOffset]);
+        flat->idx = node->idx;
+        flat->maxScore = node->maxScore;
+        flat->nChildren = node->children.size();
+        flat->nLabel = node->nLabel;
+        int iChild = 0;
+        for (const auto &child : node->children)
+            flat->data[iChild++] = zeroOffsets[child.second.get()] - thisOffset;
+        for (int i = 0; i < node->nLabel; ++i)
+            flat->data[iChild + i] = node->label[i];
+
+        for (const auto &child : node->children)
+            writeData(child.second.get());
+    };
+    writeData(root);
+
+    return FlatTrie{std::move(out)};
 }
 
 } // namespace w2l

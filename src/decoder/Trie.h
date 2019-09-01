@@ -54,6 +54,46 @@ struct TrieNode {
   float maxScore;
 };
 
+struct FlatTrieNode
+{
+    int32_t idx;
+    float maxScore;
+    int32_t nChildren;
+    int32_t nLabel;
+
+    // nChildren children offsets
+    // nLabel labels
+    int32_t data[1];
+
+    const FlatTrieNode *child(size_t i) const {
+        return reinterpret_cast<const FlatTrieNode *>(
+            reinterpret_cast<const int32_t *>(this) + data[i]);
+    }
+
+    int32_t label(size_t i) const {
+        return data[nChildren + i];
+    }
+};
+
+/**
+ * A flattenend form of the Trie that packs data tightly and
+ * works with relative offsets. Storage can be written to disk
+ * and restored as one chunk.
+ */
+struct FlatTrie
+{
+    std::vector<int32_t> storage;
+    const FlatTrieNode *getRoot() const {
+        return reinterpret_cast<const FlatTrieNode *>(storage.data());
+    }
+};
+using FlatTriePtr = std::shared_ptr<FlatTrie>;
+
+/**
+ * Converts a regular trie to the flattened form.
+ */
+FlatTrie toFlatTrie(const TrieNode *trie);
+
 using TrieNodePtr = std::shared_ptr<TrieNode>;
 
 /**
