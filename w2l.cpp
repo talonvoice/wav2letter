@@ -229,7 +229,6 @@ public:
         }
 
         // Load the trie: either the flattened cache from disk, or recreate from the lexicon
-        FlatTriePtr flatTrie;
         std::string flatTriePath = std::string(lexiconPath) + ".flattrie";
         std::ifstream flatTrieIn(flatTriePath.c_str());
         if (!flatTrieIn.good()) {
@@ -281,6 +280,9 @@ public:
             flatTrieIn.read(reinterpret_cast<char *>(flatTrie->storage.data()), byteSize);
         }
 
+        // the root maxScore should be 0 during search and it's more convenient to set here
+        const_cast<FlatTrieNode *>(flatTrie->getRoot())->maxScore = 0;
+
         // Build the command trie - if there was a real grammar there would be multiple roots
         std::shared_ptr<Trie> commandTrie = std::make_shared<Trie>(engine->tokenDict.indexSize(), silIdx);
         for (auto& it : commandLexicon) {
@@ -294,7 +296,7 @@ public:
         commandTrie->smear(SmearingMode::MAX);
         auto flatCommandTrie = std::make_shared<FlatTrie>(toFlatTrie(commandTrie->getRoot()));
 
-        CommandModel commandModel{
+        commandModel = CommandModel{
             .firstIdx = firstCommandIdx,
             .tries = flatCommandTrie,
         };
@@ -322,15 +324,18 @@ public:
             opts->silweight,
             criterionType);
 
+        KenFlatTrieLM::LM lmWrap;
+        lmWrap.ken = lm;
+        lmWrap.trie = flatTrie;
+        lmWrap.firstCommandLabel = firstCommandIdx;
+
         auto transition = afToVector<float>(engine->criterion->param(0).array());
-        decoder.reset(new SimpleDecoder{
+        decoder.reset(new SimpleDecoder<KenFlatTrieLM::LM, KenFlatTrieLM::State>{
             decoderOpt,
-            flatTrie,
-            lm,
+            lmWrap,
             silIdx,
             wordDict.getIndex(kUnkToken),
-            transition,
-            commandModel});
+            transition});
     }
     ~WrapDecoder() {}
 
@@ -343,7 +348,10 @@ public:
         std::vector<float> score;
         std::vector<std::vector<int>> wordPredictions;
         std::vector<std::vector<int>> letterPredictions;
-        return decoder->normal(emissionVec.data(), T, N);
+        KenFlatTrieLM::State startState;
+        startState.lex = flatTrie->getRoot();
+        startState.kenState = lm->start(0);
+        return decoder->normal(emissionVec.data(), T, N, startState);
         //return decoder->groupThreading(emissionVec.data(), T, N);
     }
 
@@ -370,11 +378,13 @@ public:
     }
 
     std::shared_ptr<KenLM> lm;
-    std::unique_ptr<SimpleDecoder> decoder;
+    FlatTriePtr flatTrie;
+    std::unique_ptr<SimpleDecoder<KenFlatTrieLM::LM, KenFlatTrieLM::State>> decoder;
     Dictionary wordDict;
     Dictionary tokenDict;
     DecoderOptions decoderOpt;
     int silIdx;
+    CommandModel commandModel;
 };
 
 extern "C" {
@@ -457,10 +467,12 @@ void w2l_decoder_free(w2l_decoder *decoder) {
         delete reinterpret_cast<WrapDecoder *>(decoder);
 }
 
+
+
 char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission) {
     auto engineObj = reinterpret_cast<Engine *>(engine);
     auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
-    auto &commands = decoderObj->decoder->commands_;
+    auto &commands = decoderObj->commandModel;
     auto rawEmission = reinterpret_cast<Emission *>(emission)->emission;
 
     auto emissionVec = afToVector<float>(rawEmission);
@@ -493,7 +505,9 @@ char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission
         afToVector<int>(engineObj->criterion->viterbiPath(rawEmission.array()));
     assert(N == viterbiToks.size());
 
-    auto commandState = commands.tries->getRoot();
+    KenFlatTrieLM::State commandState;
+    commandState.kenState = decoderObj->lm->start(0);
+    commandState.lex = commands.tries->getRoot();
     std::vector<int> languageDecode;
 
     int i = 0;
@@ -591,11 +605,14 @@ char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission
             continue;
         }
 
-        commandState = nextCommand->second.next;
+        commandState.lex = nextCommand->second.next;
 
         if (nextCommand->second.allowLanguage) {
             // do a language decode and store the results
-            auto languageResult = decoderObj->decoder->normal(emissionVec.data() + i * T, N - i, T);
+            KenFlatTrieLM::State langStartState;
+            langStartState.kenState = decoderObj->lm->start(0);
+            langStartState.lex = decoderObj->flatTrie->getRoot();
+            auto languageResult = decoderObj->decoder->normal(emissionVec.data() + i * T, N - i, T, langStartState);
             languageDecode = std::vector<int>(i, 0);
             languageDecode.insert(languageDecode.end(), languageResult.words.begin() + 1, languageResult.words.end());
             //std::cout << "lang decode: " << tokensToString(languageResult.tokens, 1, languageResult.tokens.size() - 1) << std::endl;
