@@ -7,7 +7,6 @@ namespace KenFlatTrieLM {
     struct LM {
         LMPtr ken;
         FlatTriePtr trie;
-        int firstCommandLabel;
     };
 
     // Every DecoderState will store a State.
@@ -48,15 +47,11 @@ namespace KenFlatTrieLM {
                 const auto n = lex->nLabel;
                 for (int i = 0; i < n; ++i) {
                     int label = lex->label(i);
-                    if (label < lm.firstCommandLabel) {
-                        auto kenAndScore = lm.ken->score(base.kenState, label);
-                        State it;
-                        it.kenState = std::move(kenAndScore.first);
-                        it.lex = lm.trie->getRoot();
-                        fn(std::move(it), label, kenAndScore.second);
-                    } else {
-                        fn(actualize(), label, 1.5);
-                    }
+                    auto kenAndScore = lm.ken->score(base.kenState, label);
+                    State it;
+                    it.kenState = std::move(kenAndScore.first);
+                    it.lex = lm.trie->getRoot();
+                    fn(std::move(it), label, kenAndScore.second);
                 }
             }
 
@@ -80,7 +75,7 @@ namespace KenFlatTrieLM {
         // Iterate over children of the state, calling fn with:
         // new State (or a Proxy), new token index and whether the new state has children
         template <typename Fn>
-        void forChildren(Fn&& fn) const {
+        void forChildren(int frame, const LM &lm, Fn&& fn) const {
             const auto n = lex->nChildren;
             for (int i = 0; i < n; ++i) {
                 auto nlex = lex->child(i);
@@ -287,19 +282,6 @@ struct DefaultHooks
 };
 DefaultHooks defaultBeamSearchHooks;
 
-struct CommandModel
-{
-    struct Node
-    {
-        bool allowLanguage;
-        const FlatTrieNode *next;
-    };
-
-    int firstIdx;
-    FlatTriePtr tries; // should have multiple roots
-    std::unordered_map<size_t, Node> nodes; // map word idx to what comes after
-};
-
 template <typename LM, typename LMStateType>
 struct BeamSearch
 {
@@ -373,7 +355,7 @@ auto BeamSearch<LM, LMStateType>::run(
 
             const float prevMaxScore = prevLmState.maxWordScore();
             /* (1) Try children */
-            prevLmState.forChildren([&, prevIdx, prevMaxScore](typename LMStateType::Proxy lmState, int n, bool hasChildren) {
+            prevLmState.forChildren(t, lm_, [&, prevIdx, prevMaxScore](auto lmState, int n, bool hasChildren) {
                 if (n == prevIdx)
                     hadIdenticalChild = true;
                 float score = prevHyp.score + emissions[frame * nTokens_ + n];

@@ -45,7 +45,27 @@ char *w2l_decoder_result_tokens(w2l_decoder *decoder, w2l_decoderesult *decodere
 void w2l_decoderesult_free(w2l_decoderesult *decoderesult);
 void w2l_decoder_free(w2l_decoder *decoder);
 
-char *w2l_decoder_process(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission);
+#pragma pack(1)
+typedef struct {
+    uint8_t token;
+    int32_t offset;
+} cfg_edge;
+
+typedef struct {
+    uint8_t flags;
+    uint8_t nEdges;
+    cfg_edge edges[0];
+} cfg;
+#pragma pack()
+
+typedef struct {
+    w2l_decode_options cmdDecodeOpts; // silweight of around 0.5 was required for me
+    float rejectionThreshold; // 0.85 maybe? 0 would disable command rejection. 1 would reject everything.
+    int rejectionTokenWindow; // 8
+    bool debug; // stdout printing
+} cmd_decode_opts;
+
+char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, cfg *dfa, cmd_decode_opts opts);
 
 #ifdef __cplusplus
 } // extern "C"
