@@ -224,6 +224,15 @@ public:
         silIdx = tokenDict.getIndex(kSilToken);
 
         auto lexicon = loadWords(lexiconPath, -1);
+
+        // Adjust the lexicon words to always end in silence
+        for (auto &entry : lexicon) {
+            for (auto &spelling : entry.second) {
+                if (spelling.empty() || spelling.back() != "|")
+                    spelling.push_back("|");
+            }
+        }
+
         wordDict = createWordDict(lexicon);
         lm = std::make_shared<KenLM>(languageModelPath, wordDict);
 
