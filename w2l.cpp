@@ -236,58 +236,13 @@ public:
         wordDict = createWordDict(lexicon);
         lm = std::make_shared<KenLM>(languageModelPath, wordDict);
 
-        // Load the trie: either the flattened cache from disk, or recreate from the lexicon
+        // Load the trie
         std::ifstream flatTrieIn(flattriePath);
-        if (!flatTrieIn.good()) {
-            // taken from Decode.cpp
-            // Build Trie
-            int blankIdx = engine->criterionType == kCtcCriterion ? engine->tokenDict.getIndex(kBlankToken) : -1;
-            std::shared_ptr<Trie> trie = std::make_shared<Trie>(engine->tokenDict.indexSize(), silIdx);
-            auto startState = lm->start(false);
-            for (auto& it : lexicon) {
-                const std::string& word = it.first;
-                int usrIdx = wordDict.getIndex(word);
-                float score = -1;
-                // if (FLAGS_decodertype == "wrd") {
-                if (true) {
-                    LMStatePtr dummyState;
-                    std::tie(dummyState, score) = lm->score(startState, usrIdx);
-                }
-                for (auto& tokens : it.second) {
-                    auto tokensTensor = tkn2Idx(tokens, engine->tokenDict);
-                    trie->insert(tokensTensor, usrIdx, score);
-                }
-            }
-
-            // Smearing
-            // TODO: smear mode argument?
-            SmearingMode smear_mode = SmearingMode::MAX;
-            /*
-            SmearingMode smear_mode = SmearingMode::NONE;
-            if (FLAGS_smearing == "logadd") {
-                smear_mode = SmearingMode::LOGADD;
-            } else if (FLAGS_smearing == "max") {
-                smear_mode = SmearingMode::MAX;
-            } else if (FLAGS_smearing != "none") {
-                LOG(FATAL) << "[Decoder] Invalid smearing mode: " << FLAGS_smearing;
-            }
-            */
-            trie->smear(smear_mode);
-
-            flatTrie = std::make_shared<FlatTrie>(toFlatTrie(trie->getRoot()));
-
-            // TODD: Add api for creating flattries
-//            std::ofstream out(flatTriePath.c_str());
-//            size_t byteSize = 4 * flatTrie->storage.size();
-//            out << byteSize;
-//            out.write(reinterpret_cast<const char*>(flatTrie->storage.data()), byteSize);
-        } else {
-            flatTrie = std::make_shared<FlatTrie>();
-            size_t byteSize;
-            flatTrieIn >> byteSize;
-            flatTrie->storage.resize(byteSize / 4);
-            flatTrieIn.read(reinterpret_cast<char *>(flatTrie->storage.data()), byteSize);
-        }
+        flatTrie = std::make_shared<FlatTrie>();
+        size_t byteSize;
+        flatTrieIn >> byteSize;
+        flatTrie->storage.resize(byteSize / 4);
+        flatTrieIn.read(reinterpret_cast<char *>(flatTrie->storage.data()), byteSize);
 
         // the root maxScore should be 0 during search and it's more convenient to set here
         const_cast<FlatTrieNode *>(flatTrie->getRoot())->maxScore = 0;
@@ -848,6 +803,66 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         return strdup(end.text.c_str());
     }
     return nullptr;
+}
+
+void w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path)
+{
+    auto tokenDict = Dictionary(tokens_path);
+    auto silIdx = tokenDict.getIndex(kSilToken);
+
+    auto lexicon = loadWords(lexicon_path, -1);
+
+    // Adjust the lexicon words to always end in silence
+    for (auto &entry : lexicon) {
+        for (auto &spelling : entry.second) {
+            if (spelling.empty() || spelling.back() != "|")
+                spelling.push_back("|");
+        }
+    }
+
+    auto wordDict = createWordDict(lexicon);
+    auto lm = std::make_shared<KenLM>(kenlm_model_path, wordDict);
+
+    // taken from Decode.cpp
+    // Build Trie
+    std::shared_ptr<Trie> trie = std::make_shared<Trie>(tokenDict.indexSize(), silIdx);
+    auto startState = lm->start(false);
+    for (auto& it : lexicon) {
+        const std::string& word = it.first;
+        int usrIdx = wordDict.getIndex(word);
+        float score = -1;
+        // if (FLAGS_decodertype == "wrd") {
+        if (true) {
+            LMStatePtr dummyState;
+            std::tie(dummyState, score) = lm->score(startState, usrIdx);
+        }
+        for (auto& tokens : it.second) {
+            auto tokensTensor = tkn2Idx(tokens, tokenDict);
+            trie->insert(tokensTensor, usrIdx, score);
+        }
+    }
+
+    // Smearing
+    // TODO: smear mode argument?
+    SmearingMode smear_mode = SmearingMode::MAX;
+    /*
+    SmearingMode smear_mode = SmearingMode::NONE;
+    if (FLAGS_smearing == "logadd") {
+        smear_mode = SmearingMode::LOGADD;
+    } else if (FLAGS_smearing == "max") {
+        smear_mode = SmearingMode::MAX;
+    } else if (FLAGS_smearing != "none") {
+        LOG(FATAL) << "[Decoder] Invalid smearing mode: " << FLAGS_smearing;
+    }
+    */
+    trie->smear(smear_mode);
+
+    auto flatTrie = std::make_shared<FlatTrie>(toFlatTrie(trie->getRoot()));
+
+    std::ofstream out(flattrie_path);
+    size_t byteSize = 4 * flatTrie->storage.size();
+    out << byteSize;
+    out.write(reinterpret_cast<const char*>(flatTrie->storage.data()), byteSize);
 }
 
 } // extern "C"
