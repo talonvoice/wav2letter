@@ -219,7 +219,7 @@ DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts) {
 
 class WrapDecoder {
 public:
-    WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath, const w2l_decode_options *opts) {
+    WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath, const char *flattriePath, const w2l_decode_options *opts) {
         tokenDict = engine->tokenDict;
         silIdx = tokenDict.getIndex(kSilToken);
 
@@ -237,8 +237,7 @@ public:
         lm = std::make_shared<KenLM>(languageModelPath, wordDict);
 
         // Load the trie: either the flattened cache from disk, or recreate from the lexicon
-        std::string flatTriePath = std::string(lexiconPath) + ".flattrie";
-        std::ifstream flatTrieIn(flatTriePath.c_str());
+        std::ifstream flatTrieIn(flattriePath);
         if (!flatTrieIn.good()) {
             // taken from Decode.cpp
             // Build Trie
@@ -276,10 +275,12 @@ public:
             trie->smear(smear_mode);
 
             flatTrie = std::make_shared<FlatTrie>(toFlatTrie(trie->getRoot()));
-            std::ofstream out(flatTriePath.c_str());
-            size_t byteSize = 4 * flatTrie->storage.size();
-            out << byteSize;
-            out.write(reinterpret_cast<const char*>(flatTrie->storage.data()), byteSize);
+
+            // TODD: Add api for creating flattries
+//            std::ofstream out(flatTriePath.c_str());
+//            size_t byteSize = 4 * flatTrie->storage.size();
+//            out << byteSize;
+//            out.write(reinterpret_cast<const char*>(flatTrie->storage.data()), byteSize);
         } else {
             flatTrie = std::make_shared<FlatTrie>();
             size_t byteSize;
@@ -492,9 +493,9 @@ void w2l_emission_free(w2l_emission *emission) {
         delete reinterpret_cast<Emission *>(emission);
 }
 
-w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const w2l_decode_options *opts) {
+w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path, const w2l_decode_options *opts) {
     // TODO: what other config? beam size? smearing? lm weight?
-    auto decoder = new WrapDecoder(reinterpret_cast<Engine *>(engine), kenlm_model_path, lexicon_path, opts);
+    auto decoder = new WrapDecoder(reinterpret_cast<Engine *>(engine), kenlm_model_path, lexicon_path, flattrie_path, opts);
     return reinterpret_cast<w2l_decoder *>(decoder);
 }
 

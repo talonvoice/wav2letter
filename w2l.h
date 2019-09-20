@@ -38,7 +38,7 @@ char *w2l_emission_text(w2l_emission *emission);
 float *w2l_emission_values(w2l_emission *emission, int *frames, int *tokens);
 void w2l_emission_free(w2l_emission *emission);
 
-w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const w2l_decode_options *opts);
+w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path, const w2l_decode_options *opts);
 w2l_decoderesult *w2l_decoder_decode(w2l_decoder *decoder, w2l_emission *emission);
 char *w2l_decoder_result_words(w2l_decoder *decoder, w2l_decoderesult *decoderesult);
 char *w2l_decoder_result_tokens(w2l_decoder *decoder, w2l_decoderesult *decoderesult);
