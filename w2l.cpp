@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string>
 #include <typeinfo>
-#include <experimental/optional>
 
 #include <flashlight/flashlight.h>
 #include <gflags/gflags.h>
@@ -603,19 +602,45 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 decoderObj->wordDict.getIndex(kUnkToken),
                 transitions};
 
-    DFALM::State commandState;
-    commandState.lex = dfalm.dfa; // presumed root state of dfa
-
-    std::vector<int> languageDecodeContext;
-
-    std::string result;
-
     if (opts.debug) {
         std::cout << "detecting in viterbi toks: " << tokensToString(viterbiToks, 0, viterbiToks.size()) << std::endl;
     }
 
-    int i = 0;
-    while (i < N) {
+    struct Hyp {
+        int endFrame = 0;
+        std::string text;
+        const cfg *next = nullptr;
+        float score = 0;
+        std::vector<int> contextDecode;
+    };
+
+    // Do an "outer beamsearch". Hyp contains the unfinished beams.
+    // The acceptable ends are collected in ends.
+    std::queue<Hyp> hyps;
+    std::vector<Hyp> ends;
+
+    hyps.push(Hyp{0, "", dfalm.dfa});
+
+    auto appendSpaced = [&](const std::string &base, const std::string &str, bool command = false) {
+        std::string out = base;
+        if (!out.empty())
+            out += " ";
+        if (command)
+            out += "@";
+        out += str;
+        return out;
+    };
+
+    while (!hyps.empty()) {
+        auto hyp = hyps.front();
+        hyps.pop();
+
+        DFALM::State commandState;
+        commandState.lex = hyp.next;
+
+        bool hypContinues = false;
+
+        int i = hyp.endFrame;
         int segStart = i;
         while (i < N && viterbiToks[i] == 0)
             ++i;
@@ -626,31 +651,12 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         // it's ok if wordStart == wordEnd, maybe the decoder sees something
 
         if (opts.debug) {
-            std::cout << "  segment viterbi toks: " << tokensToString(viterbiToks, segStart, viterbiWordEnd) << std::endl;
+            std::cout << "  hyp" << std::endl;
+            std::cout << "    text so far: " << hyp.text << std::endl;
+            std::cout << "    upcoming toks: " << tokensToString(viterbiToks, segStart, viterbiWordEnd) << std::endl;
         }
 
-        struct LanguageCandidate {
-            int endFrame;
-            int wordLabel;
-            const cfg *next;
-            float score;
-            std::vector<int> contextDecode;
-        };
-        std::vector<LanguageCandidate> languageCandidates;
-
-        struct CommandCandidate {
-            int startFrame;
-            int endFrame;
-            std::string text;
-            const cfg *next;
-        };
-        std::experimental::optional<CommandCandidate> commandCandidate;
-
-        //
-        // Mini beam-search: Prepare language and command candidates
-        //
-
-        // Deal with any language-mode children now.
+        // Find language-mode continuations of hyp.
         const cfg *lang = nullptr;
         bool allowsCommand = false;
         for (int edge = 0; edge < commandState.lex->nEdges; ++edge) {
@@ -665,8 +671,8 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             // on whether what follows is a phrase or disjoint words.
 
             std::vector<int> decode;
-            if (edgeInfo.token == DFALM::TOKEN_LMWORD_CTX && !languageDecodeContext.empty()) {
-                decode = languageDecodeContext;
+            if (edgeInfo.token == DFALM::TOKEN_LMWORD_CTX && !hyp.contextDecode.empty()) {
+                decode = hyp.contextDecode;
             } else {
                 KenFlatTrieLM::State langStartState;
                 langStartState.kenState = decoderObj->lm->start(0);
@@ -708,15 +714,17 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             // complex arrangements are possible.
             auto contextDecode = std::vector<int>(decode.begin() + langWordEnd + 1, decode.end());
 
-            languageCandidates.push_back(LanguageCandidate{
+            hyps.push(Hyp{
                 vitEnd,
-                decode[langWordEnd],
+                appendSpaced(hyp.text, decoderObj->wordDict.getEntry(decode[langWordEnd])),
                 child,
-                0,
-                contextDecode
+                hyp.score + 1,
+                contextDecode,
             });
+            hypContinues = true;
         }
 
+        // Find command continuations
         [&]() {
             if (!allowsCommand)
                 return;
@@ -790,95 +798,46 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 return;
             }
 
-            // Mark as good command
-            commandCandidate = CommandCandidate{
-                decodeWordStart, scoreWordEnd,
-                tokensToStringDedup(decoderToks, decodeWordStart, decodeWordEnd),
-                dfalm.get(dfalm.dfa, outWord)
-            };
+            hyps.push(Hyp{
+                scoreWordEnd,
+                appendSpaced(hyp.text, tokensToStringDedup(decoderToks, decodeWordStart, decodeWordEnd), true),
+                dfalm.get(dfalm.dfa, outWord),
+                hyp.score + 1000, // when in doubt prefer commands
+            });
+            hypContinues = true;
         }();
 
-        auto appendResult = [&](const std::string &str, bool command = false) {
-            if (!result.empty())
-                result += " ";
-            if (command)
-                result += "@";
-            result += str;
-        };
-
-        //
-        // Choose between the language and command candidates
-        //
-        const cfg *next = nullptr;
-
-        // First consider language words that end before the command starts
-        for (const auto &langCandidate : languageCandidates) {
-            if (commandCandidate && langCandidate.endFrame >= commandCandidate->startFrame)
-                continue;
-
-            // ### use score
-            appendResult(decoderObj->wordDict.getEntry(langCandidate.wordLabel));
-            next = langCandidate.next;
-            i = langCandidate.endFrame;
-            languageDecodeContext = langCandidate.contextDecode;
-            break;
-        }
-
-        // It's a command - if one was detected
-        if (!next && commandCandidate) {
-            appendResult(commandCandidate->text, true);
-            next = commandCandidate->next;
-            i = commandCandidate->endFrame;
-            languageDecodeContext.clear();
-        }
-
-        // Otherwise go to language after all
-        if (!next) {
-            for (const auto &langCandidate : languageCandidates) {
-                // ### use score
-                appendResult(decoderObj->wordDict.getEntry(langCandidate.wordLabel));
-                next = langCandidate.next;
-                i = langCandidate.endFrame;
-                languageDecodeContext = langCandidate.contextDecode;
-                break;
+        // If the hyp doesn't continue: accept or reject it as a possible end
+        if (!hypContinues) {
+            if (!(hyp.next->flags & DFALM::FLAG_TERM)) {
+                if (opts.debug) {
+                    std::cout << "    no decode candidates, and not TERM" << std::endl;
+                    std::cout << "    discarding: " << hyp.text << std::endl;
+                }
+            } else if (viterbiWordStart != viterbiWordEnd || viterbiWordEnd != N) {
+                // Otherwise there was something and we discard this hyp
+                if (opts.debug) {
+                    std::cout << "    no decode candidates, and more follows" << std::endl;
+                    std::cout << "    discarding: " << hyp.text << std::endl;
+                }
+            } else if (!hyp.text.empty()) {
+                if (opts.debug) {
+                    std::cout << "    accepted end score: " << hyp.score << std::endl;
+                    std::cout << "        text: " << hyp.text << std::endl;
+                }
+                ends.push_back(hyp);
             }
         }
+    }
 
-        // No matching candidates
-        if (!next) {
-            // Trailing silence detects as nothing
-            if (viterbiWordStart == viterbiWordEnd && viterbiWordEnd == N)
-                break;
-
-            // Otherwise there was something and we fail detection
-            if (opts.debug) {
-                std::cout << "    no decode candidates, aborting" << std::endl;
-                std::cout << "  discarding: " << result << std::endl << std::endl;
-            }
-            return nullptr;
-        }
-
+    // Sort ends by score and return the best one
+    std::sort(ends.begin(), ends.end(), [](const auto &l, const auto &r) { return l.score > r.score; });
+    for (const auto &end : ends) {
         if (opts.debug)
-            std::cout << "    after: " << result << std::endl;
-
-        commandState.lex = next;
+            std::cout << "  result: " << end.text << std::endl << std::endl;
+        return strdup(end.text.c_str());
     }
-
-    // Common case: only silence
-    if (result.empty())
-        return nullptr;
-
-    if (!(commandState.lex->flags & DFALM::FLAG_TERM)) {
-        if (opts.debug) {
-            std::cout << "  ended in non-terminal" << std::endl;
-            std::cout << "  discarding: " << result << std::endl << std::endl;
-        }
-        return nullptr;
-    }
-
-    if (opts.debug)
-        std::cout << "  result: " << result << std::endl << std::endl;
-    return strdup(result.c_str());
+    return nullptr;
 }
 
 } // extern "C"
