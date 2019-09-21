@@ -491,7 +491,7 @@ void w2l_decoder_free(w2l_decoder *decoder) {
         delete reinterpret_cast<WrapDecoder *>(decoder);
 }
 
-char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, cfg *dfa, cmd_decode_opts opts) {
+char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, cfg *dfa, w2l_dfa_decode_options *opts) {
     auto engineObj = reinterpret_cast<Engine *>(engine);
     auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
     auto rawEmission = reinterpret_cast<Emission *>(emission)->emission;
@@ -571,13 +571,13 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     auto dfalm = DFALM::LM{dfa};
 
     auto commandDecoder = SimpleDecoder<DFALM::LM, DFALM::State>{
-                toW2lDecoderOptions(opts.cmdDecodeOpts),
+                toW2lDecoderOptions(opts->command_decoder_opts),
                 dfalm,
                 decoderObj->silIdx,
                 decoderObj->wordDict.getIndex(kUnkToken),
                 transitions};
 
-    if (opts.debug) {
+    if (opts->debug) {
         std::cout << "detecting in viterbi toks: " << tokensToString(viterbiToks, 0, viterbiToks.size()) << std::endl;
     }
 
@@ -625,7 +625,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         int viterbiWordEnd = i;
         // it's ok if wordStart == wordEnd, maybe the decoder sees something
 
-        if (opts.debug) {
+        if (opts->debug) {
             std::cout << "  hyp" << std::endl;
             std::cout << "    text so far: " << hyp.text << std::endl;
             std::cout << "    upcoming toks: " << tokensToString(viterbiToks, segStart, viterbiWordEnd) << std::endl;
@@ -675,7 +675,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             if (vitEnd < N && viterbiToks[vitEnd] != 0)
                 vitEnd = endTok;
 
-            if (opts.debug) {
+            if (opts->debug) {
                 std::cout << "    lang candidate:" << std::endl
                           << "        word: " << decoderObj->wordDict.getEntry(decode[langWordEnd]) << std::endl
                           << "       vtoks: " << tokensToString(viterbiToks, segStart, vitEnd) << std::endl;
@@ -749,10 +749,10 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
             // the criterion for rejecting decodes is the decode-score / viterbi-score
             // where the score is the emission-transmission score
-            float windowFrac = worstEmissionTransmissionWindowFraction(decoderToks, viterbiToks, scoreWordStart, scoreWordEnd, opts.rejectionTokenWindow);
-            bool goodCommand = windowFrac > opts.rejectionThreshold && outWord != -1;
+            float windowFrac = worstEmissionTransmissionWindowFraction(decoderToks, viterbiToks, scoreWordStart, scoreWordEnd, opts->rejection_window_frames);
+            bool goodCommand = windowFrac > opts->rejection_threshold && outWord != -1;
 
-            if (opts.debug) {
+            if (opts->debug) {
                 float viterbiScore = emissionTransmissionScore(viterbiToks, scoreWordStart, scoreWordEnd);
                 float decoderScore = emissionTransmissionScore(decoderToks, scoreWordStart, scoreWordEnd);
 
@@ -785,18 +785,18 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         // If the hyp doesn't continue: accept or reject it as a possible end
         if (!hypContinues) {
             if (!(hyp.next->flags & DFALM::FLAG_TERM)) {
-                if (opts.debug) {
+                if (opts->debug) {
                     std::cout << "    no decode candidates, and not TERM" << std::endl;
                     std::cout << "    discarding: " << hyp.text << std::endl;
                 }
             } else if (viterbiWordStart != viterbiWordEnd || viterbiWordEnd != N) {
                 // Otherwise there was something and we discard this hyp
-                if (opts.debug) {
+                if (opts->debug) {
                     std::cout << "    no decode candidates, and more follows" << std::endl;
                     std::cout << "    discarding: " << hyp.text << std::endl;
                 }
             } else if (!hyp.text.empty()) {
-                if (opts.debug) {
+                if (opts->debug) {
                     std::cout << "    accepted end score: " << hyp.score << std::endl;
                     std::cout << "        text: " << hyp.text << std::endl;
                 }
@@ -808,7 +808,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     // Sort ends by score and return the best one
     std::sort(ends.begin(), ends.end(), [](const auto &l, const auto &r) { return l.score > r.score; });
     for (const auto &end : ends) {
-        if (opts.debug)
+        if (opts->debug)
             std::cout << "  result: " << end.text << std::endl << std::endl;
         return strdup(end.text.c_str());
     }

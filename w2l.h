@@ -53,13 +53,36 @@ typedef struct {
 #pragma pack()
 
 typedef struct {
-    w2l_decode_options cmdDecodeOpts; // silweight of around 0.5 was required for me
-    float rejectionThreshold; // 0.85 maybe? 0 would disable command rejection. 1 would reject everything.
-    int rejectionTokenWindow; // 8
-    bool debug; // stdout printing
-} cmd_decode_opts;
+    /** Decoder options for commands. Language options are in decoder object.
+     *
+     * silweight of around 0.5 was helpful for me.
+     */
+    w2l_decode_options command_decoder_opts;
 
-char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, cfg *dfa, cmd_decode_opts opts);
+    /** Threshold for command rejection.
+     *
+     * The emission-transmission score of potential decoded commands is divided by
+     * the score of the viterbi path. If the fraction is below this threshold
+     * the command will be rejected.
+     *
+     * Values around 0.85 work ok.
+     */
+    float rejection_threshold;
+
+    /** Window size for command vs viterbi comparison.
+     *
+     * Number of frames to use for the command score vs viterbi path score
+     * comparison.
+     *
+     * Values around 8 make sense.
+     */
+    int rejection_window_frames;
+
+    /** Whether to print debug messages to stdout. */
+    bool debug;
+} w2l_dfa_decode_options;
+
+char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, cfg *dfa, w2l_dfa_decode_options *opts);
 
 #ifdef __cplusplus
 } // extern "C"
