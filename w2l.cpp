@@ -689,6 +689,10 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             // complex arrangements are possible.
             auto contextDecode = std::vector<int>(decode.begin() + langWordEnd + 1, decode.end());
 
+            // Sanity check to guarantee no infinite hyp loops
+            if (vitEnd <= segStart)
+                continue;
+
             hyps.push(Hyp{
                 vitEnd,
                 appendSpaced(hyp.text, decoderObj->wordDict.getEntry(decode[langWordEnd])),
@@ -772,6 +776,10 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             if (!goodCommand) {
                 return;
             }
+
+            // Sanity check to guarantee no infinite hyp loops
+            if (scoreWordEnd <= segStart)
+                return;
 
             hyps.push(Hyp{
                 scoreWordEnd,
