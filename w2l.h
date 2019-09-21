@@ -43,13 +43,13 @@ void w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, co
 typedef struct {
     uint8_t token;
     int32_t offset;
-} cfg_edge;
+} w2l_dfa_edge;
 
 typedef struct {
     uint8_t flags;
     uint8_t nEdges;
-    cfg_edge edges[0];
-} cfg;
+    w2l_dfa_edge edges[0];
+} w2l_dfa_node;
 #pragma pack()
 
 typedef struct {
@@ -82,7 +82,15 @@ typedef struct {
     bool debug;
 } w2l_dfa_decode_options;
 
-char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, cfg *dfa, w2l_dfa_decode_options *opts);
+/** Decode emisssions according to dfa model, return decoded text.
+ *
+ * If the decode fails or no good paths exist the result will be NULL.
+ * If it is not null, the caller is responsible for free()ing the string.
+ *
+ * The dfa argument points to the first w2l_dfa_node. It is expected that
+ * its address and edge offsets can be used to traverse the full dfa.
+ */
+char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, w2l_dfa_node *dfa, w2l_dfa_decode_options *opts);
 
 #ifdef __cplusplus
 } // extern "C"

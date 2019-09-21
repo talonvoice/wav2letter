@@ -345,15 +345,15 @@ enum {
 };
 
 struct LM {
-    const cfg *dfa;
-    const cfg *get(const cfg *base, const int32_t idx) const {
-        return reinterpret_cast<const cfg *>(reinterpret_cast<const uint8_t *>(base) + idx);
+    const w2l_dfa_node *dfa;
+    const w2l_dfa_node *get(const w2l_dfa_node *base, const int32_t idx) const {
+        return reinterpret_cast<const w2l_dfa_node *>(reinterpret_cast<const uint8_t *>(base) + idx);
     }
     int wordStartsBefore = 1000000000;
 };
 
 struct State {
-    const cfg *lex = nullptr;
+    const w2l_dfa_node *lex = nullptr;
     bool wordEnd = false;
 
     // used for making an unordered_set of const State*
@@ -491,7 +491,7 @@ void w2l_decoder_free(w2l_decoder *decoder) {
         delete reinterpret_cast<WrapDecoder *>(decoder);
 }
 
-char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, cfg *dfa, w2l_dfa_decode_options *opts) {
+char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, w2l_dfa_node *dfa, w2l_dfa_decode_options *opts) {
     auto engineObj = reinterpret_cast<Engine *>(engine);
     auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
     auto rawEmission = reinterpret_cast<Emission *>(emission)->emission;
@@ -584,7 +584,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     struct Hyp {
         int endFrame = 0;
         std::string text;
-        const cfg *next = nullptr;
+        const w2l_dfa_node *next = nullptr;
         float score = 0;
         std::vector<int> contextDecode;
     };
@@ -632,11 +632,11 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         }
 
         // Find language-mode continuations of hyp.
-        const cfg *lang = nullptr;
+        const w2l_dfa_node *lang = nullptr;
         bool allowsCommand = false;
         for (int edge = 0; edge < commandState.lex->nEdges; ++edge) {
             const auto &edgeInfo = commandState.lex->edges[edge];
-            const cfg *child = dfalm.get(commandState.lex, edgeInfo.offset);
+            const w2l_dfa_node *child = dfalm.get(commandState.lex, edgeInfo.offset);
             if (edgeInfo.token != DFALM::TOKEN_LMWORD && edgeInfo.token != DFALM::TOKEN_LMWORD_CTX) {
                 allowsCommand = true;
                 continue;
