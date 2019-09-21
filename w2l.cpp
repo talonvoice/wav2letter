@@ -27,6 +27,16 @@
 
 #include "simpledecoder.cpp"
 
+w2l_decode_options w2l_decode_defaults {
+    2500,
+    25,
+    1.0,
+    1.0,
+    -INFINITY,
+    false,
+    0.0,
+};
+
 using namespace w2l;
 
 class EngineBase {

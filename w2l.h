@@ -19,15 +19,7 @@ typedef struct {
     float silweight;
 } w2l_decode_options;
 
-static w2l_decode_options w2l_decode_defaults {
-    2500,
-    25,
-    1.0,
-    1.0,
-    -INFINITY,
-    false,
-    0.0,
-};
+extern w2l_decode_options w2l_decode_defaults;
 
 w2l_engine *w2l_engine_new(const char *acoustic_model_path, const char *tokens_path);
 w2l_emission *w2l_engine_process(w2l_engine *engine, float *samples, size_t sample_count);
