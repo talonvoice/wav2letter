@@ -815,7 +815,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     return nullptr;
 }
 
-void w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path)
+bool w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path)
 {
     auto tokenDict = Dictionary(tokens_path);
     auto silIdx = tokenDict.getIndex(kSilToken);
@@ -869,10 +869,15 @@ void w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, co
 
     auto flatTrie = std::make_shared<FlatTrie>(toFlatTrie(trie->getRoot()));
 
-    std::ofstream out(flattrie_path);
+    std::ofstream out(flattrie_path, std::ios::out | std::ios::trunc | std::ios::binary);
+    if (!out.is_open())
+        return false;
+
     size_t byteSize = 4 * flatTrie->storage.size();
     out << byteSize;
     out.write(reinterpret_cast<const char*>(flatTrie->storage.data()), byteSize);
+    out.close();
+    return out.good();
 }
 
 } // extern "C"
