@@ -568,9 +568,19 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         afToVector<int>(engineObj->criterion->viterbiPath(rawEmission.array()));
     assert(N == viterbiToks.size());
 
+    // Lets skip decoding if viterbi thinks it's all silence
+    bool allSilence = true;
+    for (auto t : viterbiToks) {
+        if (t != 0)
+            allSilence = false;
+    }
+    if (allSilence)
+        return nullptr;
+
     auto dfalm = DFALM::LM{dfa};
 
-    auto commandDecoder = SimpleDecoder<DFALM::LM, DFALM::State>{
+    using CommandDecoder = SimpleDecoder<DFALM::LM, DFALM::State>;
+    auto commandDecoder = CommandDecoder{
                 toW2lDecoderOptions(opts->command_decoder_opts),
                 dfalm,
                 decoderObj->silIdx,
@@ -617,6 +627,16 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
         int i = hyp.endFrame;
         int segStart = i;
+
+        // CLEAN and explain me
+        if (i < N) {
+            auto newViterbiToks =
+                afToVector<int>(engineObj->criterion->viterbiPath(rawEmission.array().cols(i, N - 1)));
+            for (int j = 0; j < i; ++j)
+                newViterbiToks.insert(newViterbiToks.begin(), 0);
+            viterbiToks = newViterbiToks;
+        }
+
         while (i < N && viterbiToks[i] == 0)
             ++i;
         int viterbiWordStart = i;
@@ -629,6 +649,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             std::cout << "  hyp" << std::endl;
             std::cout << "    text so far: " << hyp.text << std::endl;
             std::cout << "    upcoming toks: " << tokensToString(viterbiToks, segStart, viterbiWordEnd) << std::endl;
+            std::cout << "    viterbi word: " << tokensToString(viterbiToks, viterbiWordStart, viterbiWordEnd) << std::endl;
         }
 
         // Find language-mode continuations of hyp.
@@ -641,6 +662,8 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 allowsCommand = true;
                 continue;
             }
+            if (segStart == N)
+                continue;
 
             // TODO: We may want different decoding (maybe even acoustic models) depending
             // on whether what follows is a phrase or disjoint words.
@@ -653,6 +676,15 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 langStartState.kenState = decoderObj->lm->start(0);
                 langStartState.lex = decoderObj->flatTrie->getRoot();
                 auto languageResult = decoderObj->decoder->normal(emissionVec.data() + segStart * T, N - segStart, T, langStartState);
+                std::cout << "lang decode:" << N - segStart << " " << languageResult.words.size() << " " << languageResult.tokens.size() << std::endl;
+                for (auto j = 0; j < languageResult.words.size(); ++j) {
+                    std::cout << (languageResult.tokens[j] == -1 ? "-" : engineObj->tokenDict.getEntry(languageResult.tokens[j]));
+                }
+                std::cout << std::endl;
+                for (auto j = 0; j < languageResult.words.size(); ++j) {
+                    std::cout << (languageResult.words[j] == -1 ? "-" : "w");
+                }
+                std::cout << std::endl;
                 decode = std::move(languageResult.words);
             }
 
@@ -707,87 +739,162 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         [&]() {
             if (!allowsCommand)
                 return;
+            if (segStart == N)
+                return;
+
+            struct CommandViterbiDifferenceRejecter {
+                int viterbiWordStart;
+                std::vector<float> viterbiWindowScores;
+                int windowMaxSize;
+                float threshold;
+                float *emissions;
+                float *transitions;
+                int T;
+
+                float extraNewTokenScore(int frame, const CommandDecoder::DecoderState &prevState, int token) const {
+                    // don't do rejection in sil tokens
+                    // this implicitly avoids rejecting after the first word
+                    if (token == 0)
+                        return 0;
+                    auto refScore = viterbiWindowScores[frame];
+
+                    int prevToken = token;
+                    auto thisState = &prevState;
+                    float thisScore = emissions[frame * T + token];
+                    int thisWindow = 1;
+                    //std::cout << token_lookup[token];
+                    while (thisWindow < windowMaxSize && thisState && frame - thisWindow >= 0) {
+                        token = thisState->getToken();
+                        //std::cout << token_lookup[token];
+                        thisScore += emissions[(frame - thisWindow) * T + token] + transitions[prevToken * T + token];
+                        ++thisWindow;
+                        prevToken = token;
+                        thisState = thisState->parent;
+                    }
+
+                    //std::cout << " " << thisScore << " " << refScore << " " << thisScore/refScore << std::endl;
+
+                    if (thisScore / refScore < threshold)
+                        return -100000;
+                    return 0;
+                }
+            };
+            CommandViterbiDifferenceRejecter rejecter;
+            rejecter.viterbiWordStart = viterbiWordStart - segStart;
+            rejecter.windowMaxSize = opts->rejection_window_frames;
+            rejecter.threshold = 0.75;//opts->rejection_threshold;
+            rejecter.emissions = emissionVec.data() + segStart * T;
+            rejecter.transitions = transitions.data();
+            rejecter.T = T;
+            {
+                float score = 0;
+                for (int j = segStart; j < N; ++j) {
+                    score += emissionVec[j * T + viterbiToks[j]];
+                    if (j != segStart)
+                        score += transitions[viterbiToks[j] * T + viterbiToks[j - 1]];
+                    //std::cout << token_lookup[viterbiToks[j]] << " " << score;
+                    rejecter.viterbiWindowScores.push_back(score);
+                    if (j - segStart < opts->rejection_window_frames - 1)
+                        continue;
+                    auto r = j - (opts->rejection_window_frames - 1);
+                    score -= emissionVec[r * T + viterbiToks[r]];
+                    if (r != segStart)
+                        score -= transitions[viterbiToks[r] * T + viterbiToks[r - 1]];
+                }
+            }
 
             // in the future we could stop the decode after one word instead of
             // decoding everything
             int decodeLen = N - segStart;
             commandDecoder.lm_.wordStartsBefore = viterbiWordEnd - segStart;
             commandState.wordEnd = true;
-            auto decodeResult = commandDecoder.normal(emissionVec.data() + segStart * T, decodeLen, T, commandState);
-            auto decoderToks = decodeResult.tokens;
-            decoderToks.erase(decoderToks.begin()); // initial hyp token
-            std::vector<int> startSil(segStart, 0);
-            decoderToks.insert(decoderToks.begin(), startSil.begin(), startSil.end());
-            decodeLen += segStart;
+            std::vector<CommandDecoder::DecoderState> startStates;
+            startStates.emplace_back(commandState, nullptr, 0.0, 0, -1);
+            auto beams = commandDecoder.normalAll(emissionVec.data() + segStart * T, decodeLen, T, startStates, rejecter);
+            const auto &beamEnds = beams.hyp.back();
+            std::set<std::string> seenDecodeWords;
+            for (const auto &beamEnd : beamEnds) {
+                auto decodeResult = getHypothesis(&beamEnd, beams.hyp.size() - 1);
 
-            int j = 0;
-            while (j < decodeLen && decoderToks[j] == 0)
-                ++j;
-            int decodeWordStart = j;
-            while (j < decodeLen && decoderToks[j] != 0)
-                ++j;
-            int decodeWordEnd = j;
-            // Again it's ok if wordStart == wordEnd, need to process anyway.
-            // Maybe we are in language mode and need to emit those words?
-
-            // we score the decoded word plus any adjacent non-sil viterbi tokens
-            // - at least until the next decoded command word start
-            int scoreWordStart = std::min(viterbiWordStart, decodeWordStart);
-            int scoreWordEnd = decodeWordEnd;
-            while (scoreWordEnd < N && viterbiToks[scoreWordEnd] != 0 && decoderToks[scoreWordEnd] == 0)
-                ++scoreWordEnd;
-
-            // if the decoder didn't see anything but viterbi saw something, there's no command
-            if (decodeWordStart == decodeWordEnd) {
-                return;
-            }
-
-            // find the recognized word index
-            int outWord = -1;
-            // word decode is only written in first silence *after* the word
-            for (int j = scoreWordStart; j < std::max(decodeWordEnd + 1, scoreWordEnd); ++j) {
-                outWord = decodeResult.words[1 + j - segStart]; // +1 because of initial hyp
-                if (outWord != -1)
-                    break;
-            }
-
-            // the criterion for rejecting decodes is the decode-score / viterbi-score
-            // where the score is the emission-transmission score
-            float windowFrac = worstEmissionTransmissionWindowFraction(decoderToks, viterbiToks, scoreWordStart, scoreWordEnd, opts->rejection_window_frames);
-            bool goodCommand = windowFrac > opts->rejection_threshold && outWord != -1;
-
-            if (opts->debug) {
-                float viterbiScore = emissionTransmissionScore(viterbiToks, scoreWordStart, scoreWordEnd);
-                float decoderScore = emissionTransmissionScore(decoderToks, scoreWordStart, scoreWordEnd);
-
-                if (outWord == -1) {
-                    std::cout << "    no command" << std::endl;
-                } else if (goodCommand) {
-                    std::cout << "    good command" << std::endl;
-                } else {
-                    std::cout << "    rejected command" << std::endl;
+                // find the recognized word index
+                int nextDfaNode = -1;
+                for (auto label : decodeResult.words) {
+                    if (label != -1) {
+                        nextDfaNode = label;
+                        break;
+                    }
                 }
-                std::cout << "       decoder: " << tokensToString(decoderToks, scoreWordStart, scoreWordEnd) << std::endl
-                          << "       viterbi: " << tokensToString(viterbiToks, scoreWordStart, scoreWordEnd) << std::endl
-                          << "       scores: decoder: " << decoderScore << " viterbi: " << viterbiScore << " fraction: " << decoderScore / viterbiScore << std::endl
-                          << "               worst window fraction: " << windowFrac << std::endl;
+                // reject no-decodes
+                if (nextDfaNode == -1)
+                    continue;
+
+                auto decoderToks = decodeResult.tokens;
+                decoderToks.erase(decoderToks.begin()); // initial hyp token
+                std::vector<int> startSil(segStart, 0);
+                decoderToks.insert(decoderToks.begin(), startSil.begin(), startSil.end());
+                assert(segStart + decodeLen == decoderToks.size());
+
+                int j = 0;
+                while (j < decoderToks.size() && decoderToks[j] == 0)
+                    ++j;
+                int decodeWordStart = j;
+                while (j < decoderToks.size() && decoderToks[j] != 0)
+                    ++j;
+                int decodeWordEnd = j;
+
+                // if the decoder didn't see anything but viterbi saw something, there's no command
+                if (decodeWordStart == decodeWordEnd) {
+                    continue;
+                }
+
+                // Don't look at the same decoded word twice
+                const auto decodedWord = tokensToStringDedup(decoderToks, decodeWordStart, decodeWordEnd);
+                if (seenDecodeWords.find(decodedWord) != seenDecodeWords.end())
+                    continue;
+                seenDecodeWords.insert(decodedWord);
+
+                // we score the decoded word plus some following tokens (should be silence!)
+                int scoreWordStart = std::min(viterbiWordStart, decodeWordStart);
+                int scoreWordEnd = std::min(decodeWordEnd + 3, N);
+
+                // the criterion for rejecting decodes is the decode-score / viterbi-score
+                // where the score is the emission-transmission score
+                float windowFrac = worstEmissionTransmissionWindowFraction(decoderToks, viterbiToks, scoreWordStart, scoreWordEnd, opts->rejection_window_frames);
+                bool goodCommand = windowFrac > opts->rejection_threshold && nextDfaNode != -1;
+
+                if (opts->debug) {
+                    float viterbiScore = emissionTransmissionScore(viterbiToks, scoreWordStart, scoreWordEnd);
+                    float decoderScore = emissionTransmissionScore(decoderToks, scoreWordStart, scoreWordEnd);
+
+                    if (nextDfaNode == -1) {
+                        std::cout << "    no command" << std::endl;
+                    } else if (goodCommand) {
+                        std::cout << "    good command" << std::endl;
+                    } else {
+                        std::cout << "    rejected command" << std::endl;
+                    }
+                    std::cout << "       decoder: " << tokensToString(decoderToks, scoreWordStart, scoreWordEnd) << std::endl
+                              << "       viterbi: " << tokensToString(viterbiToks, scoreWordStart, scoreWordEnd) << std::endl
+                              << "       scores: decoder: " << decoderScore << " viterbi: " << viterbiScore << " fraction: " << decoderScore / viterbiScore << std::endl
+                              << "               worst window fraction: " << windowFrac << std::endl;
+                }
+
+                if (!goodCommand) {
+                    continue; // too many candidates?
+                }
+
+                // Sanity check to guarantee no infinite hyp loops
+                if (scoreWordEnd <= segStart)
+                    break;
+
+                hyps.push(Hyp{
+                    decodeWordEnd,
+                    appendSpaced(hyp.text, decodedWord, true),
+                    dfalm.get(dfalm.dfa, nextDfaNode),
+                    hyp.score + 1000, // when in doubt prefer commands
+                });
+                hypContinues = true;
             }
-
-            if (!goodCommand) {
-                return;
-            }
-
-            // Sanity check to guarantee no infinite hyp loops
-            if (scoreWordEnd <= segStart)
-                return;
-
-            hyps.push(Hyp{
-                scoreWordEnd,
-                appendSpaced(hyp.text, tokensToStringDedup(decoderToks, decodeWordStart, decodeWordEnd), true),
-                dfalm.get(dfalm.dfa, outWord),
-                hyp.score + 1000, // when in doubt prefer commands
-            });
-            hypContinues = true;
         }();
 
         // If the hyp doesn't continue: accept or reject it as a possible end

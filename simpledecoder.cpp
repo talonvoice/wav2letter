@@ -273,14 +273,19 @@ auto rangeAdapter(const std::vector<T> &v, int start = 0, int stride = 1)
 
 // wip idea: can customize beamsearch without performance penalty by
 // providing struct confirming to this interface
+template <typename DecoderState>
 struct DefaultHooks
 {
-    float extraNewTokenScore(int frame, int prevToken, int token)
+    float extraNewTokenScore(int frame, const DecoderState &prevState, int token)
     {
         return 0;
     }
+
+    static DefaultHooks instance;
 };
-DefaultHooks defaultBeamSearchHooks;
+
+template <typename DecoderState>
+DefaultHooks<DecoderState> DefaultHooks<DecoderState>::instance;
 
 template <typename LM, typename LMStateType>
 struct BeamSearch
@@ -297,16 +302,15 @@ struct BeamSearch
     struct Result
     {
         std::vector<std::vector<DecoderState>> hyp;
-        std::vector<DecoderState> ends;
         float bestBeamScore;
     };
 
-    template <typename Range, typename Hooks = DefaultHooks>
+    template <typename Range, typename Hooks = DefaultHooks<DecoderState>>
     Result run(const float *emissions,
                const int startFrame,
                const int frames,
                Range initialHyp,
-               Hooks &hooks = defaultBeamSearchHooks) const;
+               Hooks &hooks = DefaultHooks<DecoderState>::instance) const;
 };
 
 template <typename LM, typename LMStateType>
@@ -365,7 +369,7 @@ auto BeamSearch<LM, LMStateType>::run(
                 if (n == sil_) {
                     score += opt_.silWeight;
                 }
-                score += hooks.extraNewTokenScore(frame, prevIdx, n);
+                score += hooks.extraNewTokenScore(frame, prevHyp, n);
 
                 // If we got a true word
                 bool hadLabel = false;
@@ -426,7 +430,7 @@ auto BeamSearch<LM, LMStateType>::run(
                 if (n == sil_) {
                     score += opt_.silWeight;
                 }
-                score += hooks.extraNewTokenScore(frame, prevIdx, n);
+                score += hooks.extraNewTokenScore(frame, prevHyp, n);
 
                 beamSearchNewCandidate(
                         candidates,
@@ -444,16 +448,14 @@ auto BeamSearch<LM, LMStateType>::run(
         beamSearchSelectBestCandidates(hyp[t + 1], candidates, candidatesBestScore - opt_.beamThreshold, lm_, opt_.beamSize);
     }
 
-    std::vector<DecoderState> filteredEnds;
-    beamSearchSelectBestCandidates(filteredEnds, ends, endsBestScore - opt_.beamThreshold, lm_, opt_.beamSize);
-
-    return Result{std::move(hyp), std::move(filteredEnds), candidatesBestScore};
+    return Result{std::move(hyp), candidatesBestScore};
 }
 
 template <typename LM, typename LMStateType>
 struct SimpleDecoder
 {
     using DecoderState = SimpleDecoderState<LMStateType>;
+    using Search = BeamSearch<LM, LMStateType>;
 
     DecoderOptions opt_;
     LM lm_;
@@ -465,6 +467,16 @@ struct SimpleDecoder
                         const int frames,
                         const int nTokens,
                         const LMStateType startState) const;
+
+    // Like normal, but returns the full beam search state
+    // Also, doesn't finish() the language model
+    template <typename BeamHooks = DefaultHooks<DecoderState>>
+    auto normalAll(const float *emissions,
+                   const int frames,
+                   const int nTokens,
+                   const std::vector<DecoderState> &startStates,
+                   BeamHooks &hooks = DefaultHooks<DecoderState>::instance) const
+        -> typename Search::Result;
 
 //    DecodeResult groupThreading(const float *emissions,
 //                                const int frames,
@@ -485,12 +497,10 @@ auto SimpleDecoder<LM, LMStateType>::normal(
 {
     std::vector<std::vector<DecoderState>> hyp;
     hyp.resize(1);
-
-    /* note: the lm reset itself with :start() */
     hyp[0].emplace_back(
                 startState, nullptr, 0.0, sil_, -1);
 
-    BeamSearch<LM, LMStateType> beamSearch{
+    Search beamSearch{
         .opt_ = opt_,
         .transitions_ = transitions_,
         .lm_ = lm_,
@@ -505,6 +515,28 @@ auto SimpleDecoder<LM, LMStateType>::normal(
     beamSearchFinish(result, beams.hyp.back(), lm_, opt_);
 
     return getHypothesis(&result[0], beams.hyp.size());
+}
+
+template <typename LM, typename LMStateType>
+template <typename BeamHooks>
+auto SimpleDecoder<LM, LMStateType>::normalAll(
+        const float *emissions,
+        const int frames,
+        const int nTokens,
+        const std::vector<DecoderState> &startStates,
+        BeamHooks &hooks) const
+    -> typename Search::Result
+{
+    Search beamSearch{
+        .opt_ = opt_,
+        .transitions_ = transitions_,
+        .lm_ = lm_,
+        .sil_ = sil_,
+        .unk_ = unk_,
+        .nTokens_ = nTokens,
+    };
+
+    return beamSearch.run(emissions, 0, frames, rangeAdapter(startStates), hooks);
 }
 
 //auto SimpleDecoder::groupThreading(const float *emissions,
