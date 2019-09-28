@@ -590,12 +590,12 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         for (int i = from; i < to; ++i) {
             score1 += emissionTransmissionAdjustment(tokens1, from, i, emissionVec.data());
             score2 += emissionTransmissionAdjustment(tokens2, from, i, emissionVec.data());
-            if (i < from + window)
+            if (i < from + window - 1)
                 continue;
             if (worst > score1 / score2)
                 worst = score1 / score2;
-            score1 -= emissionTransmissionAdjustment(tokens1, from, i - window, emissionVec.data());
-            score2 -= emissionTransmissionAdjustment(tokens2, from, i - window, emissionVec.data());
+            score1 -= emissionTransmissionAdjustment(tokens1, from, i - window + 1, emissionVec.data());
+            score2 -= emissionTransmissionAdjustment(tokens2, from, i - window + 1, emissionVec.data());
         }
         score1 += transitions[0 * T + tokens1[to - 1]]; // to silence
         score2 += transitions[0 * T + tokens2[to - 1]]; // to silence
