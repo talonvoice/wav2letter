@@ -350,6 +350,7 @@ struct LM {
         return reinterpret_cast<const w2l_dfa_node *>(reinterpret_cast<const uint8_t *>(base) + idx);
     }
     int wordStartsBefore = 1000000000;
+    float commandScore = 1.5;
 };
 
 struct State {
@@ -374,9 +375,8 @@ struct State {
     // Iterate over labels, calling fn with: the new State, the label index and the lm score
     template <typename Fn>
     void forLabels(const LM &lm, Fn&& fn) const {
-        const float commandScore = 1.5;
         if (wordEnd) {
-            fn(*this, reinterpret_cast<const uint8_t*>(lex) - reinterpret_cast<const uint8_t*>(lm.dfa), commandScore);
+            fn(*this, reinterpret_cast<const uint8_t*>(lex) - reinterpret_cast<const uint8_t*>(lm.dfa), lm.commandScore);
         }
     }
 
@@ -637,6 +637,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         return nullptr;
 
     auto dfalm = DFALM::LM{dfa};
+    dfalm.commandScore = opts->command_decoder_opts.wordscore;
 
     auto commandDecoder = CommandDecoder{
                 toW2lDecoderOptions(opts->command_decoder_opts),
