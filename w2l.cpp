@@ -560,27 +560,27 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     int N = rawEmission.dims(1);
     auto &transitions = decoderObj->decoder->transitions_;
 
-    auto emissionTransmissionAdjustment = [&emissionVec, &transitions, T](const std::vector<int> &tokens, int from, int i) {
+    auto emissionTransmissionAdjustment = [&transitions, T](const std::vector<int> &tokens, int from, int i, float *emissions) {
         float score = 0;
         if (i > from) {
             score += transitions[tokens[i] * T + tokens[i - 1]];
         } else {
             score += transitions[tokens[i] * T + 0]; // from silence
         }
-        score += emissionVec[i * T + tokens[i]];
+        score += emissions[i * T + tokens[i]];
         return score;
     };
 
-    auto emissionTransmissionScore = [&emissionTransmissionAdjustment, &transitions, T](const std::vector<int> &tokens, int from, int to) {
+    auto emissionTransmissionScore = [&emissionTransmissionAdjustment, &transitions, T](const std::vector<int> &tokens, int from, int to, float *emissions) {
         float score = 0.0;
         for (int i = from; i < to; ++i) {
-            score += emissionTransmissionAdjustment(tokens, from, i);
+            score += emissionTransmissionAdjustment(tokens, from, i, emissions);
         }
         score += transitions[0 * T + tokens[to - 1]]; // to silence
         return score;
     };
 
-    auto worstEmissionTransmissionWindowFraction = [&emissionTransmissionAdjustment, &transitions, T](
+    auto worstEmissionTransmissionWindowFraction = [&emissionVec, &emissionTransmissionAdjustment, &transitions, T](
             const std::vector<int> &tokens1,
             const std::vector<int> &tokens2,
             int from, int to, int window) {
@@ -588,14 +588,14 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         float score2 = 0.0;
         float worst = INFINITY;
         for (int i = from; i < to; ++i) {
-            score1 += emissionTransmissionAdjustment(tokens1, from, i);
-            score2 += emissionTransmissionAdjustment(tokens2, from, i);
+            score1 += emissionTransmissionAdjustment(tokens1, from, i, emissionVec.data());
+            score2 += emissionTransmissionAdjustment(tokens2, from, i, emissionVec.data());
             if (i < from + window)
                 continue;
             if (worst > score1 / score2)
                 worst = score1 / score2;
-            score1 -= emissionTransmissionAdjustment(tokens1, from, i - window);
-            score2 -= emissionTransmissionAdjustment(tokens2, from, i - window);
+            score1 -= emissionTransmissionAdjustment(tokens1, from, i - window, emissionVec.data());
+            score2 -= emissionTransmissionAdjustment(tokens2, from, i - window, emissionVec.data());
         }
         score1 += transitions[0 * T + tokens1[to - 1]]; // to silence
         score2 += transitions[0 * T + tokens2[to - 1]]; // to silence
@@ -654,7 +654,8 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         std::string text;
         const w2l_dfa_node *next = nullptr;
         float score = 0;
-        std::vector<int> contextDecode;
+        std::vector<int> langDecodeLabels;
+        std::vector<int> langDecodeTokens;
     };
 
     // Do an "outer beamsearch". Hyp contains the unfinished beams.
@@ -733,9 +734,11 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             // TODO: We may want different decoding (maybe even acoustic models) depending
             // on whether what follows is a phrase or disjoint words.
 
-            std::vector<int> decode;
-            if (edgeInfo.token == DFALM::TOKEN_LMWORD_CTX && !hyp.contextDecode.empty()) {
-                decode = hyp.contextDecode;
+            std::vector<int> decodeLabels;
+            std::vector<int> decodeTokens;
+            if (edgeInfo.token == DFALM::TOKEN_LMWORD_CTX && !hyp.langDecodeLabels.empty()) {
+                decodeLabels = hyp.langDecodeLabels;
+                decodeTokens = hyp.langDecodeTokens;
             } else {
                 KenFlatTrieLM::State langStartState;
                 langStartState.kenState = decoderObj->lm->start(0);
@@ -750,17 +753,22 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 //                    std::cout << (languageResult.words[j] == -1 ? "-" : "w");
 //                }
 //                std::cout << std::endl;
-                decode = std::move(languageResult.words);
+                decodeLabels = std::move(languageResult.words);
+                decodeTokens = std::move(languageResult.tokens);
+                decodeLabels.erase(decodeLabels.begin());
+                decodeTokens.erase(decodeTokens.begin());
             }
 
             // Find the first decode result
-            int langWordEnd = 1;
-            while (langWordEnd < decode.size() && decode[langWordEnd] == -1)
+            int langWordEnd = 0;
+            while (langWordEnd < decodeLabels.size() && decodeLabels[langWordEnd] == -1)
                 ++langWordEnd;
-            if (langWordEnd == decode.size())
+            if (langWordEnd == decodeLabels.size())
                 continue;
 
-            int endTok = segStart + langWordEnd - 1; // -1 because decode has an initial hyp in [0]
+            int decodeLabel = decodeLabels[langWordEnd];
+            auto decodeWord = decoderObj->wordDict.getEntry(decodeLabel);
+            int endTok = segStart + langWordEnd;
 
             // Due to negative silweight in the language decoder it's often the case
             // that the decode ends but viterbi toks still run on. Allow consuming
@@ -774,7 +782,8 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
             if (opts->debug) {
                 std::cout << "    lang candidate:" << std::endl
-                          << "        word: " << decoderObj->wordDict.getEntry(decode[langWordEnd]) << std::endl
+                          << "        word: " << decodeWord << std::endl
+                          << "        toks: " << tokensToString(decodeTokens, 0, langWordEnd) << std::endl
                           << "       vtoks: " << tokensToString(viterbiToks, segStart, vitEnd) << std::endl;
             }
 
@@ -784,7 +793,9 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             // A mixed approach where the beam is collapsed when seeing a command word,
             // but the kenlm language state is nevertheless retained seems easiest. And much more
             // complex arrangements are possible.
-            auto contextDecode = std::vector<int>(decode.begin() + langWordEnd + 1, decode.end());
+            auto nextDecodeLabels = std::vector<int>(decodeLabels.begin() + langWordEnd, decodeLabels.end());
+            nextDecodeLabels[0] = -1;
+            auto nextDecodeTokens = std::vector<int>(decodeTokens.begin() + langWordEnd, decodeTokens.end());
 
             // Sanity check to guarantee no infinite hyp loops
             if (vitEnd <= segStart)
@@ -792,10 +803,11 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
             hyps.push(Hyp{
                 vitEnd,
-                appendSpaced(hyp.text, decoderObj->wordDict.getEntry(decode[langWordEnd])),
+                appendSpaced(hyp.text, decodeWord),
                 child,
-                hyp.score + 1,
-                contextDecode,
+                hyp.score + emissionTransmissionScore(decodeTokens, 0, langWordEnd, &emissionVec[segStart * T]),
+                nextDecodeLabels,
+                nextDecodeTokens,
             });
             hypContinues = true;
         }
@@ -875,8 +887,8 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 bool goodCommand = windowFrac > opts->rejection_threshold && nextDfaNode != -1;
 
                 if (opts->debug) {
-                    float viterbiScore = emissionTransmissionScore(viterbiToks, scoreWordStart, scoreWordEnd);
-                    float decoderScore = emissionTransmissionScore(decoderToks, scoreWordStart, scoreWordEnd);
+                    float viterbiScore = emissionTransmissionScore(viterbiToks, scoreWordStart, scoreWordEnd, emissionVec.data());
+                    float decoderScore = emissionTransmissionScore(decoderToks, scoreWordStart, scoreWordEnd, emissionVec.data());
 
                     if (nextDfaNode == -1) {
                         std::cout << "    no command" << std::endl;
@@ -899,11 +911,17 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 if (scoreWordEnd <= segStart)
                     break;
 
+                // Tiny adjustment to make it prefer commands if the
+                // exact same tokens are valid as language and command.
+                const auto commandBonusScore = 1;
+
                 hyps.push(Hyp{
                     decodeWordEnd,
                     appendSpaced(hyp.text, decodedWord, true),
                     dfalm.get(dfalm.dfa, nextDfaNode),
-                    hyp.score + 1000, // when in doubt prefer commands
+                    hyp.score
+                        + emissionTransmissionScore(decoderToks, segStart, decodeWordEnd, emissionVec.data())
+                        + commandBonusScore,
                 });
                 hypContinues = true;
             }
@@ -934,6 +952,11 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
     // Sort ends by score and return the best one
     std::sort(ends.begin(), ends.end(), [](const auto &l, const auto &r) { return l.score > r.score; });
+    if (opts->debug) {
+        for (const auto &end : ends)
+            std::cout << "  possible result: " << end.score << " " << end.text << std::endl;
+
+    }
     for (const auto &end : ends) {
         if (opts->debug)
             std::cout << "  result: " << end.text << std::endl << std::endl;
