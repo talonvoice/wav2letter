@@ -822,7 +822,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
             CommandViterbiDifferenceRejecter rejecter;
             rejecter.windowMaxSize = opts->rejection_window_frames;
-            rejecter.threshold = 0.75;//opts->rejection_threshold;
+            rejecter.threshold = opts->early_rejection_threshold;
             rejecter.emissions = emissionVec.data() + segStart * T;
             rejecter.transitions = transitions.data();
             rejecter.T = T;

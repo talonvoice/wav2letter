@@ -69,6 +69,13 @@ typedef struct {
      */
     float rejection_threshold;
 
+    /** Threshold for early command rejection.
+     *
+     * Similar to rejection_threshold but works during letter beamsearch
+     * already. Should be less than the full rejection threshold.
+     */
+    float early_rejection_threshold;
+
     /** Window size for command vs viterbi comparison.
      *
      * Number of frames to use for the command score vs viterbi path score
