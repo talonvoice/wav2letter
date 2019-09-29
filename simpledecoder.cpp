@@ -1,4 +1,3 @@
-#include "criterion/CriterionUtils.h"
 
 using namespace w2l;
 

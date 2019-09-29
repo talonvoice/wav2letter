@@ -239,7 +239,7 @@ target_link_libraries(
   )
 
 # ----------------------------- libw2l -----------------------------
-add_library(w2l w2l.cpp)
+add_library(w2l w2l.cpp w2l_forward.cpp)
 set_target_properties(
   w2l
   PROPERTIES

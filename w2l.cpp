@@ -2,21 +2,15 @@
 #include <stdlib.h>
 #include <string>
 #include <typeinfo>
+#include <cassert>
 
-#include <flashlight/flashlight.h>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
 #include "common/Defines.h"
 #include "common/Dictionary.h"
 #include "common/Transforms.h"
-#include "common/Utils.h"
-#include "criterion/criterion.h"
-#include "data/W2lDataset.h"
-#include "module/module.h"
-#include "runtime/Logger.h"
-#include "runtime/Serial.h"
-#include "decoder/Decoder.h"
+#include "common/Utils-base.h"
 #include "decoder/Utils.h"
 #include "decoder/Trie.h"
 #include "decoder/WordLMDecoder.h"
@@ -24,8 +18,21 @@
 #include "lm/KenLM.h"
 
 #include "w2l.h"
+#include "w2l_p.h"
 
 #include "simpledecoder.cpp"
+
+namespace w2l {
+// from common/Utils.h (which includes flashlight, so we don't include it)
+std::string join(const std::string& delim, const std::vector<std::string>& vec);
+}
+
+template <typename T>
+std::vector<T> afToVector(const af::array& arr) {
+  std::vector<T> vec(arr.elements());
+  arr.host(vec.data());
+  return vec;
+}
 
 w2l_decode_options w2l_decode_defaults {
     2500,
@@ -38,182 +45,6 @@ w2l_decode_options w2l_decode_defaults {
 };
 
 using namespace w2l;
-
-class EngineBase {
-public:
-    int numClasses;
-    std::unordered_map<std::string, std::string> config;
-    std::shared_ptr<fl::Module> network;
-    std::shared_ptr<SequenceCriterion> criterion;
-    std::string criterionType;
-    Dictionary tokenDict;
-};
-
-class Emission {
-public:
-    Emission(EngineBase *engine, fl::Variable emission) {
-        this->engine = engine;
-        this->emission = emission;
-    }
-    ~Emission() {}
-
-    char *text() {
-        auto tokenPrediction =
-            afToVector<int>(engine->criterion->viterbiPath(emission.array()));
-        auto letters = tknPrediction2Ltr(tokenPrediction, engine->tokenDict);
-        if (letters.size() > 0) {
-            std::ostringstream ss;
-            for (auto s : letters) ss << s;
-            return strdup(ss.str().c_str());
-        }
-        return strdup("");
-    }
-
-    EngineBase *engine;
-    fl::Variable emission;
-};
-
-class Engine : public EngineBase {
-public:
-    Engine(const char *acousticModelPath, const char *tokensPath) {
-        // TODO: set criterionType "correctly"
-        W2lSerializer::load(acousticModelPath, config, network, criterion);
-        auto flags = config.find(kGflags);
-        // loading flags globally like this is gross, only way to work around it will be parameterizing everything about wav2letter better
-        gflags::ReadFlagsFromString(flags->second, gflags::GetArgv0(), true);
-
-        criterionType = FLAGS_criterion;
-        network->eval();
-        criterion->eval();
-
-        tokenDict = Dictionary(tokensPath);
-        numClasses = tokenDict.indexSize();
-    }
-    ~Engine() {}
-
-    Emission *process(float *samples, size_t sample_count) {
-        struct W2lLoaderData data = {};
-        std::copy(samples, samples + sample_count, std::back_inserter(data.input));
-
-        auto feat = featurize({data}, {});
-        auto input = af::array(feat.inputDims, feat.input.data());
-        auto rawEmission = network->forward({fl::input(input)}).front();
-        return new Emission(this, rawEmission);
-    }
-
-    bool exportModel(const char *path) {
-        std::ofstream outfile;
-        outfile.open(path, std::ios::out | std::ios::binary);
-        if (!outfile.is_open()) {
-                std::cout << "[w2lapi] error, could not open file '" << path << "' (aborting export)" << std::endl;
-            return false;
-        }
-
-        auto seq = dynamic_cast<fl::Sequential *>(network.get());
-        for (auto &module : seq->modules()) {
-            if (!exportLayer(outfile, module.get())) {
-                std::cout << "[w2lapi] aborting export" << std::endl;
-                return false;
-            }
-        }
-        return true;
-    }
-
-private:
-    std::tuple<int, int> splitOn(std::string s, std::string on) {
-        auto split = s.find(on);
-        auto first = s.substr(0, split);
-        auto second = s.substr(split + on.size());
-        // std::cout << "string [" << s << "] on [" << on << "] first " << first << " second " << second << std::endl;
-        return {std::stoi(first), std::stoi(second)};
-    }
-
-    std::string findParens(std::string s) {
-        auto start = s.find('(');
-        auto end = s.find(')', start);
-        auto sp = s.substr(start + 1, end - start - 1);
-        // std::cout << "string split [" << s << "] " << start << " " << end << " [" << sp << "]" << std::endl;
-        return sp;
-    }
-
-    void exportParams(std::ofstream& f, fl::Variable params) {
-        auto array = afToVector<float>(params.array());
-        for (auto& p : array) {
-            f << std::hex << (uint32_t&)p;
-            if (&p != &array.back()) {
-                f << " ";
-            }
-        }
-        f << std::dec;
-    }
-
-    bool exportLayer(std::ofstream& f, fl::Module *module) {
-        auto pretty = module->prettyString();
-        auto type = pretty.substr(0, pretty.find(' '));
-        std::cout << "[w2lapi] exporting: " << pretty << std::endl;
-        if (type == "WeightNorm") {
-            auto wn = dynamic_cast<fl::WeightNorm *>(module);
-            auto lastParam = pretty.rfind(",") + 2;
-            auto dim = pretty.substr(lastParam, pretty.size() - lastParam - 1);
-            f << "WN " << dim << " ";
-            exportLayer(f, wn->module().get());
-        } else if (type == "View") {
-            auto ratio = findParens(pretty);
-            f << "V " << findParens(pretty) << "\n";
-        } else if (type == "Dropout") {
-            f << "DO " << findParens(pretty) << "\n";
-        } else if (type == "Reorder") {
-            auto dims = findParens(pretty);
-            std::replace(dims.begin(), dims.end(), ',', ' ');
-            f << "RO " << dims << "\n";
-        } else if (type == "GatedLinearUnit") {
-            f << "GLU " << findParens(pretty) << "\n";
-        } else if (type == "Conv2D") {
-            // Conv2D (234->514, 23x1, 1,1, 0,0, 1, 1) (with bias)
-            auto parens = findParens(pretty);
-            bool bias = pretty.find("with bias") >= 0;
-            int inputs, outputs, szX, szY, padX, padY, strideX, strideY, dilateX, dilateY;
-            // TODO: I could get some of these from the params' dims instead of string parsing...
-
-            auto comma1 = parens.find(',') + 1;
-            std::tie(inputs, outputs) = splitOn(parens.substr(0, comma1), "->");
-
-            auto comma2 = parens.find(',', comma1) + 1;
-            std::tie(szX, szY) = splitOn(parens.substr(comma1, comma2 - comma1 - 1), "x");
-
-            auto comma4 = parens.find(',', parens.find(',', comma2) + 1) + 1;
-            std::tie(strideX, strideY) = splitOn(parens.substr(comma2, comma4 - comma2 - 1), ",");
-
-            auto comma6 = parens.find(',', parens.find(',', comma4) + 1) + 1;
-            std::tie(padX, padY) = splitOn(parens.substr(comma4, comma6 - comma4 - 1), ",");
-
-            auto comma8 = parens.find(',', parens.find(',', comma6) + 1) + 1;
-            std::tie(dilateX, dilateY) = splitOn(parens.substr(comma6, comma8 - comma6 - 1), ",");
-
-            // FIXME we're ignoring everything after padX because I don't know the actual spec
-            // string split [Conv2D (40->200, 13x1, 1,1, 170,0, 1, 1) (with bias)] 7 39 [40->200, 13x1, 1,1, 170,0, 1, 1]
-            // fl::Conv2D C2 [inputChannels] [outputChannels] [xFilterSz] [yFilterSz] [xStride] [yStride] [xPadding <OPTIONAL>] [yPadding <OPTIONAL>] [xDilation <OPTIONAL>] [yDilation <OPTIONAL>]
-            f << "C " << inputs << " " << outputs << " " << szX << " " << szY << " " << padX << " | ";
-            exportParams(f, module->param(0));
-            if (bias) {
-                f << " | ";
-                exportParams(f, module->param(1));
-            }
-            f << "\n";
-        } else if (type == "Linear") {
-            int inputs, outputs;
-            std::tie(inputs, outputs) = splitOn(findParens(pretty), "->");
-            f << "L " << inputs << " " << outputs << " | ";
-            exportParams(f, module->param(0));
-            f << "\n";
-        } else {
-            // TODO: also write error to the file?
-            std::cout << "[w2lapi] error, unknown layer type: " << type << std::endl;
-            return false;
-        }
-        return true;
-    }
-};
 
 DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts) {
     return DecoderOptions(
@@ -270,7 +101,7 @@ public:
         lmWrap.ken = lm;
         lmWrap.trie = flatTrie;
 
-        auto transition = afToVector<float>(engine->criterion->param(0).array());
+        auto transition = engine->transitions();
         decoder.reset(new SimpleDecoder<KenFlatTrieLM::LM, KenFlatTrieLM::State>{
             decoderOpt,
             lmWrap,
@@ -503,9 +334,9 @@ char *w2l_emission_text(w2l_emission *emission) {
 
 float *w2l_emission_values(w2l_emission *emission, int *frames, int *tokens) {
     auto em = reinterpret_cast<Emission *>(emission);
-    auto data = afToVector<float>(em->emission.array());
-    *frames = em->emission.array().dims(1);
-    *tokens = em->emission.array().dims(0);
+    auto data = afToVector<float>(em->emission);
+    *frames = em->emission.dims(1);
+    *tokens = em->emission.dims(0);
     int datasize = sizeof(float) * *frames * *tokens;
     float *out = static_cast<float *>(malloc(datasize));
     memcpy(out, data.data(), datasize);
@@ -553,7 +384,8 @@ void w2l_decoder_free(w2l_decoder *decoder) {
 char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, w2l_dfa_node *dfa, w2l_dfa_decode_options *opts) {
     auto engineObj = reinterpret_cast<Engine *>(engine);
     auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
-    auto rawEmission = reinterpret_cast<Emission *>(emission)->emission;
+    auto emissionObj = reinterpret_cast<Emission *>(emission);
+    auto rawEmission = emissionObj->emission;
 
     auto emissionVec = afToVector<float>(rawEmission);
     int T = rawEmission.dims(0);
@@ -624,7 +456,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     };
 
     auto viterbiToks =
-        afToVector<int>(engineObj->criterion->viterbiPath(rawEmission.array()));
+        afToVector<int>(engineObj->viterbiPath(rawEmission));
     assert(N == viterbiToks.size());
 
     // Lets skip decoding if viterbi thinks it's all silence
@@ -698,7 +530,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         // algorithm was kept around and it was run back-to-front.
         if (i < N) {
             auto newViterbiToks =
-                afToVector<int>(engineObj->criterion->viterbiPath(rawEmission.array().cols(i, N - 1)));
+                afToVector<int>(engineObj->viterbiPath(rawEmission.cols(i, N - 1)));
             for (int j = 0; j < i; ++j)
                 newViterbiToks.insert(newViterbiToks.begin(), 0);
             viterbiToks = newViterbiToks;
@@ -881,6 +713,20 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 // we score the decoded word plus some following tokens (should be silence!)
                 int scoreWordStart = std::min(viterbiWordStart, decodeWordStart);
                 int scoreWordEnd = std::min(decodeWordEnd + 3, N);
+
+
+                // TEST what happens if we pass through the forward model again
+                /*
+                std::cout << segStart << " " << scoreWordEnd << " " << emissionObj->inputs.dims() << std::endl;
+                auto modinput = emissionObj->inputs(af::seq(segStart * 2, af::end), af::span, af::span, af::span);
+                std::cout << modinput.dims() << std::endl;
+                auto modemissionsRaw = engineObj->process(modinput);
+                std::cout << modemissionsRaw.dims() << std::endl;
+                auto modemissions = afToVector<float>(modemissionsRaw);
+                auto newViterbiToks =
+                    afToVector<int>(engineObj->viterbiPath(modemissionsRaw));
+                std::cout << tokensToString(newViterbiToks, 0, newViterbiToks.size()) << std::endl;
+                */
 
                 // the criterion for rejecting decodes is the decode-score / viterbi-score
                 // where the score is the emission-transmission score
