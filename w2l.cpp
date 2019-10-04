@@ -520,6 +520,14 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         int i = hyp.endFrame;
         int segStart = i;
 
+        // Optionally rerun the acoustic model from the current location
+        if (i < N && opts->rerun_acoustic) {
+            auto nextInput = emissionObj->inputs(af::seq(i * opts->feature_frames_per_output_frame, af::end), af::span, af::span, af::span);
+            auto nextEmissions = engineObj->process(nextInput);
+            rawEmission(af::span, af::seq(i, af::end), af::span, af::span) = nextEmissions;
+            emissionVec = afToVector<float>(rawEmission);
+        }
+
         // Compute the viterbi path starting at token i. This is helpful because often the
         // viterbi path incorrectly merges words and changing the start produces better token
         // assignments.
@@ -713,20 +721,6 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 // we score the decoded word plus some following tokens (should be silence!)
                 int scoreWordStart = std::min(viterbiWordStart, decodeWordStart);
                 int scoreWordEnd = std::min(decodeWordEnd + 3, N);
-
-
-                // TEST what happens if we pass through the forward model again
-                /*
-                std::cout << segStart << " " << scoreWordEnd << " " << emissionObj->inputs.dims() << std::endl;
-                auto modinput = emissionObj->inputs(af::seq(segStart * 2, af::end), af::span, af::span, af::span);
-                std::cout << modinput.dims() << std::endl;
-                auto modemissionsRaw = engineObj->process(modinput);
-                std::cout << modemissionsRaw.dims() << std::endl;
-                auto modemissions = afToVector<float>(modemissionsRaw);
-                auto newViterbiToks =
-                    afToVector<int>(engineObj->viterbiPath(modemissionsRaw));
-                std::cout << tokensToString(newViterbiToks, 0, newViterbiToks.size()) << std::endl;
-                */
 
                 // the criterion for rejecting decodes is the decode-score / viterbi-score
                 // where the score is the emission-transmission score

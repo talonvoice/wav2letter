@@ -85,6 +85,12 @@ typedef struct {
      */
     int rejection_window_frames;
 
+    /** For large acoustic models it's 1, for small ones it's 2 */
+    int feature_frames_per_output_frame;
+
+    /** Whether to rerun the acoustic model after each recognized segment. */
+    bool rerun_acoustic;
+
     /** Whether to print debug messages to stdout. */
     bool debug;
 } w2l_dfa_decode_options;
