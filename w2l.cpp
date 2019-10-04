@@ -768,14 +768,16 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             }
         }();
 
+        bool viterbiEndSilence = viterbiWordStart == viterbiWordEnd && viterbiWordEnd == N;
+
         // If the hyp doesn't continue: accept or reject it as a possible end
-        if (!hypContinues) {
+        if (!hypContinues || viterbiEndSilence) {
             if (!(hyp.next->flags & DFALM::FLAG_TERM)) {
                 if (opts->debug) {
                     std::cout << "    no decode candidates, and not TERM" << std::endl;
                     std::cout << "    discarding: " << hyp.text << std::endl;
                 }
-            } else if (viterbiWordStart != viterbiWordEnd || viterbiWordEnd != N) {
+            } else if (!viterbiEndSilence) {
                 // Otherwise there was something and we discard this hyp
                 if (opts->debug) {
                     std::cout << "    no decode candidates, and more follows" << std::endl;
