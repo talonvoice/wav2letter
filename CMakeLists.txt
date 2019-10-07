@@ -143,7 +143,9 @@ target_link_libraries(w2l
     ${LIBOMP}
     lzma
 )
-target_link_libraries(w2l -Wl,-cache_path_lto,/tmp/lto-cache)
+if (APPLE)
+    target_link_libraries(w2l -Wl,-cache_path_lto,/tmp/lto-cache)
+endif()
 
 target_include_directories(
   w2l
