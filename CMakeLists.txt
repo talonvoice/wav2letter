@@ -123,7 +123,7 @@ add_library(w2l SHARED
 )
 
 if (USE_MKL)
-    target_compile_definitions(w2l PUBLIC -DUSE_MKL)
+    target_compile_definitions(w2l PUBLIC -DUSE_MKL -DW2L_LIBRARIES_USE_MKL)
     find_library(MKL_CORE NAMES libmkl_core.a)
     find_library(MKL_INTEL_LP64 NAMES libmkl_intel_lp64.a)
     find_library(MKL_GNU_THREAD NAMES libmkl_gnu_thread.a)
