@@ -741,9 +741,27 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                     continue;
                 seenDecodeWords.insert(decodedWord);
 
-                // we score the decoded word plus some following tokens (should be silence!)
+                // Compute the start and end of the scored word.
                 int scoreWordStart = std::min(viterbiWordStart, decodeWordStart);
-                int scoreWordEnd = std::min(decodeWordEnd + 3, N);
+                int scoreWordEnd = decodeWordEnd;
+                int trailingTokenEnd = decodeWordEnd;
+                while (viterbiToks[trailingTokenEnd] == decoderToks[decodeWordEnd - 1] && trailingTokenEnd < N)
+                    trailingTokenEnd++;
+                if (trailingTokenEnd > decodeWordEnd) {
+                    // Often there are trailing tokens.
+                    // four has viterbi fourrrrrrr
+                    // sometimes it's connected to the next word: fourrrrrrrright
+                    if (trailingTokenEnd != N && viterbiToks[trailingTokenEnd] != 0)
+                        scoreWordEnd += (trailingTokenEnd - decodeWordEnd) / 2;
+                    else
+                        scoreWordEnd = trailingTokenEnd;
+                    for (int k = decodeWordEnd; k < scoreWordEnd; ++k)
+                        decoderToks[k] = decoderToks[decodeWordEnd - 1];
+                    decodeWordEnd = scoreWordEnd;
+                } else {
+                    // extend by one minimum - shoud be at least one frame of silence between words.
+                    scoreWordEnd = std::min(decodeWordEnd + 1, N);
+                }
 
                 // the criterion for rejecting decodes is the decode-score / viterbi-score
                 // where the score is the emission-transmission score
