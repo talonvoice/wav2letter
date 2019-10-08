@@ -788,11 +788,17 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                     std::cout << "    discarding: " << hyp.text << std::endl;
                 }
             } else if (!hyp.text.empty()) {
+                auto end = hyp;
+
+                // Score the remaining silence
+                auto silence = std::vector<int>(N, 0);
+                end.score += emissionTransmissionScore(silence, segStart, N, emissionVec.data());
+
                 if (opts->debug) {
-                    std::cout << "    accepted end score: " << hyp.score << std::endl;
-                    std::cout << "        text: " << hyp.text << std::endl;
+                    std::cout << "    accepted end score: " << end.score << std::endl;
+                    std::cout << "        text: " << end.text << std::endl;
                 }
-                ends.push_back(hyp);
+                ends.push_back(end);
             }
         }
     }
