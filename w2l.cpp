@@ -471,6 +471,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
     auto viterbiToks =
         afToVector<int>(engineObj->viterbiPath(rawEmission));
+    const auto originalViterbiToks = viterbiToks;
     assert(N == viterbiToks.size());
 
     // Lets skip decoding if viterbi thinks it's all silence
@@ -501,6 +502,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         std::string text;
         const w2l_dfa_node *next = nullptr;
         float score = 0;
+        std::vector<int> tokens;
         std::vector<int> langDecodeLabels;
         std::vector<int> langDecodeTokens;
     };
@@ -520,6 +522,12 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             out += "@";
         out += str;
         return out;
+    };
+
+    auto appendToks = [](const std::vector<int> &base, const std::vector<int> &append, int begin, int end) {
+        auto result = base;
+        result.insert(result.end(), append.begin() + begin, append.begin() + end);
+        return result;
     };
 
     while (!hyps.empty()) {
@@ -661,6 +669,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 appendSpaced(hyp.text, decodeWord),
                 child,
                 hyp.score + emissionTransmissionScore(decodeTokens, 0, langWordEnd, &emissionVec[segStart * T]),
+                appendToks(appendToks(hyp.tokens, decodeTokens, 0, langWordEnd), viterbiToks, endTok, vitEnd),
                 nextDecodeLabels,
                 nextDecodeTokens,
             });
@@ -777,6 +786,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                     hyp.score
                         + emissionTransmissionScore(decoderToks, segStart, decodeWordEnd, emissionVec.data())
                         + commandBonusScore,
+                    appendToks(hyp.tokens, decoderToks, segStart, decodeWordEnd),
                 });
                 hypContinues = true;
             }
@@ -816,9 +826,13 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     // Sort ends by score and return the best one
     std::sort(ends.begin(), ends.end(), [](const auto &l, const auto &r) { return l.score > r.score; });
     if (opts->debug) {
-        for (const auto &end : ends)
+        for (const auto &end : ends) {
+            // Could do rejection here.
+            //auto rej = worstEmissionTransmissionWindowFraction(end.tokens, originalViterbiToks, 0, end.tokens.size(), opts->rejection_window_frames);
+            //if (rej < 0.6)
+            //    continue;
             std::cout << "  possible result: " << end.score << " " << end.text << std::endl;
-
+        }
     }
     for (const auto &end : ends) {
         if (opts->debug)
