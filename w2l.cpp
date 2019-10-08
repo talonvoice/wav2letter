@@ -182,31 +182,37 @@ struct LM {
     }
     int wordStartsBefore = 1000000000;
     float commandScore = 1.5;
+    std::vector<int> viterbiToks;
 };
 
 struct State {
     const w2l_dfa_node *lex = nullptr;
-    bool wordEnd = false;
+    uint8_t flags = 0;
+    enum : uint8_t {
+        FlagWordStarted = 1,
+        FlagWordEnded = 2,
+        FlagWordLabel = 4,
+    };
 
     // used for making an unordered_set of const State*
     struct Hash {
         const LM &unused;
         size_t operator()(const State *v) const {
-            return std::hash<const void*>()(v->lex) ^ v->wordEnd;
+            return std::hash<const void*>()(v->lex) ^ v->flags;
         }
     };
 
     struct Equality {
         const LM &unused;
         int operator()(const State *v1, const State *v2) const {
-            return v1->lex == v2->lex && v1->wordEnd == v2->wordEnd;
+            return v1->lex == v2->lex && v1->flags == v2->flags;
         }
     };
 
     // Iterate over labels, calling fn with: the new State, the label index and the lm score
     template <typename Fn>
     void forLabels(const LM &lm, Fn&& fn) const {
-        if (wordEnd) {
+        if (flags & FlagWordLabel) {
             fn(*this, reinterpret_cast<const uint8_t*>(lex) - reinterpret_cast<const uint8_t*>(lm.dfa), lm.commandScore);
         }
     }
@@ -223,16 +229,21 @@ struct State {
     // Iterate over children of the state, calling fn with:
     // new State, new token index and whether the new state has children
     template <typename Fn>
-    void forChildren(int frame, const LM &lm, Fn&& fn) const {
-        if (wordEnd && frame >= lm.wordStartsBefore)
-            return;
+    bool forChildren(int frame, const LM &lm, Fn&& fn) const {
+        if (!(flags & FlagWordStarted) && frame >= lm.wordStartsBefore)
+            return true;
+        if (flags & FlagWordEnded) {
+            fn(State{lex, FlagWordStarted | FlagWordEnded}, lm.viterbiToks[frame], true);
+            return false;
+        }
         for (int i = 0; i < lex->nEdges; ++i) {
             const auto &edge = lex->edges[i];
             auto nlex = lm.get(lex, edge.offset);
             if (edge.token == TOKEN_LMWORD || edge.token == TOKEN_LMWORD_CTX)
                 continue;
-            fn(State{nlex, edge.token == 0}, edge.token, edge.token != 0);
+            fn(State{nlex, uint8_t(edge.token == 0 ? (FlagWordStarted | FlagWordEnded | FlagWordLabel) : FlagWordStarted)}, edge.token, edge.token != 0);
         }
+        return true;
     }
 
     State &actualize() {
@@ -258,9 +269,8 @@ struct CommandViterbiDifferenceRejecter {
     int T;
 
     float extraNewTokenScore(int frame, const CommandDecoder::DecoderState &prevState, int token) const {
-        // don't do rejection in sil tokens
-        // this implicitly avoids rejecting after the first word
-        if (token == 0)
+        // Stop rejection after decode word end
+        if (prevState.lmState.flags & DFALM::State::FlagWordEnded)
             return 0;
         auto refScore = viterbiWindowScores[frame];
 
@@ -676,7 +686,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             // decoding everything
             int decodeLen = N - segStart;
             commandDecoder.lm_.wordStartsBefore = viterbiWordEnd - segStart;
-            commandState.wordEnd = true;
+            commandDecoder.lm_.viterbiToks.assign(viterbiToks.begin() + segStart, viterbiToks.end());
             std::vector<CommandDecoder::DecoderState> startStates;
             startStates.emplace_back(commandState, nullptr, 0.0, 0, -1);
             auto beams = commandDecoder.normalAll(emissionVec.data() + segStart * T, decodeLen, T, startStates, rejecter);
