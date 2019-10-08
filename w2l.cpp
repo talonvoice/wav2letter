@@ -276,10 +276,14 @@ struct CommandViterbiDifferenceRejecter {
             thisState = thisState->parent;
         }
 
-        //std::cout << " " << thisScore << " " << refScore << " " << thisScore/refScore << std::endl;
+        // rejecting based on non-full windows is too unstable
+        // only do it after the decode word end
+        if (thisWindow < windowMaxSize && token != 0)
+            return 0;
 
-        if (thisScore / refScore < threshold)
+        if (thisScore / refScore < threshold) {
             return -100000;
+        }
         return 0;
     }
 
