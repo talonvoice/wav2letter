@@ -160,16 +160,13 @@ public:
 
 namespace DFALM {
 
-std::string tokens = "|'abcdefghijklmnopqrstuvwxyz";
-const int TOKENS = 28;
-std::vector<uint8_t> charToToken(128);
-uint32_t EDGE_INIT[TOKENS] = {0};
-
+// flags on dfa nodes
 enum {
     FLAG_NONE    = 0,
     FLAG_TERM    = 1,
 };
 
+// special token values on dfa edges
 enum {
     TOKEN_LMWORD     = 255,
     TOKEN_LMWORD_CTX = 254,
@@ -232,9 +229,8 @@ struct State {
             return;
         }
 
-        // command labels are negative, and offsets from lm.dfa
+        // command labels are offsets from lm.dfa, plus the firstCommandLabel value
         if (wordEnd) {
-            // the dfa node offset is actually unused
             fn(*this, lm.firstCommandLabel + (reinterpret_cast<const uint8_t*>(grammarLex) - reinterpret_cast<const uint8_t*>(lm.dfa)), lm.commandScore);
         }
     }
@@ -293,11 +289,11 @@ struct State {
 
 } // namespace DFALM
 
-using CommandDecoder = SimpleDecoder<DFALM::LM, DFALM::State>;
+using CombinedDecoder = SimpleDecoder<DFALM::LM, DFALM::State>;
 
 // Score adjustment during beam search to reject beams early
 // that diverge too much from the best emission-transmission score.
-struct CommandViterbiDifferenceRejecter {
+struct ViterbiDifferenceRejecter {
     std::vector<int> viterbiToks;
 
     // index i contains the emission-transmission score of up to windowMaxSize
@@ -310,7 +306,7 @@ struct CommandViterbiDifferenceRejecter {
     float *transitions;
     int T;
 
-    float extraNewTokenScore(int frame, const CommandDecoder::DecoderState &prevState, int token) const {
+    float extraNewTokenScore(int frame, const CombinedDecoder::DecoderState &prevState, int token) const {
         auto refScore = viterbiWindowScores[frame];
 
         bool allSilence = token == 0;
@@ -485,11 +481,11 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         return nullptr;
 
     auto dfalm = DFALM::LM{decoderObj->lm, decoderObj->flatTrie, dfa};
-    dfalm.commandScore = opts->command_decoder_opts.wordscore;
+    dfalm.commandScore = opts->command_score;
     dfalm.firstCommandLabel = decoderObj->wordDict.indexSize();
 
-    auto commandDecoder = CommandDecoder{
-                toW2lDecoderOptions(opts->command_decoder_opts),
+    auto commandDecoder = CombinedDecoder{
+                decoderObj->decoderOpt,
                 dfalm,
                 decoderObj->silIdx,
                 decoderObj->wordDict.getIndex(kUnkToken),
@@ -509,9 +505,9 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         return out;
     };
 
-    CommandViterbiDifferenceRejecter rejecter;
+    ViterbiDifferenceRejecter rejecter;
     rejecter.windowMaxSize = opts->rejection_window_frames;
-    rejecter.threshold = opts->early_rejection_threshold;
+    rejecter.threshold = opts->rejection_threshold;
     rejecter.emissions = emissionVec.data();
     rejecter.transitions = transitions.data();
     rejecter.T = T;
@@ -524,13 +520,13 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     // in the future we could stop the decode after one word instead of
     // decoding everything
     int decodeLen = N;
-    std::vector<CommandDecoder::DecoderState> startStates;
+    std::vector<CombinedDecoder::DecoderState> startStates;
     startStates.emplace_back(commandState, nullptr, 0.0, 0, -1);
     auto unfinishedBeams = commandDecoder.normalAll(emissionVec.data(), decodeLen, T, startStates, rejecter);
 
     // Finishing kills beams that end in the middle of a word, or
     // in a grammar state that isn't TERM
-    std::vector<CommandDecoder::DecoderState> beamEnds;
+    std::vector<CombinedDecoder::DecoderState> beamEnds;
     beamSearchFinish(beamEnds, unfinishedBeams.hyp.back(), dfalm, commandDecoder.opt_);
 
     if (beamEnds.empty())
