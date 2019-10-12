@@ -298,6 +298,8 @@ using CommandDecoder = SimpleDecoder<DFALM::LM, DFALM::State>;
 // Score adjustment during beam search to reject beams early
 // that diverge too much from the best emission-transmission score.
 struct CommandViterbiDifferenceRejecter {
+    std::vector<int> viterbiToks;
+
     // index i contains the emission-transmission score of up to windowMaxSize
     // previous frames of the viterbiTokens, see precomputeViterbiWindowScores.
     std::vector<float> viterbiWindowScores;
@@ -311,12 +313,15 @@ struct CommandViterbiDifferenceRejecter {
     float extraNewTokenScore(int frame, const CommandDecoder::DecoderState &prevState, int token) const {
         auto refScore = viterbiWindowScores[frame];
 
+        bool allSilence = token == 0;
         int prevToken = token;
         auto thisState = &prevState;
         float thisScore = emissions[frame * T + token];
         int thisWindow = 1;
         while (thisWindow < windowMaxSize && thisState && frame - thisWindow >= 0) {
             token = thisState->getToken();
+            if (token != 0)
+                allSilence = false;
             thisScore += emissions[(frame - thisWindow) * T + token] + transitions[prevToken * T + token];
             ++thisWindow;
             prevToken = token;
@@ -330,6 +335,12 @@ struct CommandViterbiDifferenceRejecter {
         if (thisScore / refScore < threshold) {
             return -100000;
         }
+
+        // Only allow a full silence window if the viterbi tok in the middle is also silence
+        if (allSilence && viterbiToks[frame - windowMaxSize/2] != 0) {
+            return -100000;
+        }
+
         return 0;
     }
 
@@ -505,6 +516,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     rejecter.transitions = transitions.data();
     rejecter.T = T;
     rejecter.precomputeViterbiWindowScores(0, viterbiToks);
+    rejecter.viterbiToks = viterbiToks;
 
     DFALM::State commandState;
     commandState.grammarLex = dfalm.dfa;
