@@ -544,18 +544,15 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     int lastSilence = -1;
     for (int i = 0; i < decodeResult.words.size(); ++i) {
         const auto label = decodeResult.words[i];
-        const auto token = decodeResult.tokens[i];
-        if (label == -1) {
-            if (token == 0)
-                lastSilence = i;
-            continue;
-        }
-
-        if (label < dfalm.firstCommandLabel) {
+        if (label >= 0 && label < dfalm.firstCommandLabel) {
             result = appendSpaced(result, decoderObj->wordDict.getEntry(label), false);
-        } else {
+        } else if (label >= dfalm.firstCommandLabel) {
             result = appendSpaced(result, tokensToStringDedup(decodeResult.tokens, lastSilence + 1, i), true);
         }
+
+        const auto token = decodeResult.tokens[i];
+        if (token == 0)
+            lastSilence = i;
     }
 
     if (opts->debug)
