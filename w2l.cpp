@@ -207,7 +207,10 @@ struct State {
     struct Equality {
         const LM &lm_;
         int operator()(const State *v1, const State *v2) const {
-            return v1->grammarLex == v2->grammarLex && v1->dictLex == v2->dictLex && lm_.ken->compareState(v1->kenState, v2->kenState) == 0;
+            return v1->grammarLex == v2->grammarLex
+                && v1->dictLex == v2->dictLex
+                && (v1->kenState == v2->kenState
+                    || (v1->kenState && v2->kenState && lm_.ken->compareState(v1->kenState, v2->kenState) == 0));
         }
     };
 
