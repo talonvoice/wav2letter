@@ -478,9 +478,15 @@ struct SimpleDecoder
                    BeamHooks &hooks = DefaultHooks<DecoderState>::instance) const
         -> typename Search::Result;
 
-//    DecodeResult groupThreading(const float *emissions,
-//                                const int frames,
-//                                const int nTokens) const;
+    template <typename BeamHooks>
+    auto groupThreading(const float *emissions,
+                        const int frames,
+                        const int nTokens,
+                        const std::vector<DecoderState> &startStates,
+                        BeamHooks &hooks,
+                        const int nThreads,
+                        const int stepsPerFanout) const
+        -> typename Search::Result;
 
 //    DecodeResult diversity(const float *emissions,
 //                           const int frames,
@@ -539,90 +545,87 @@ auto SimpleDecoder<LM, LMStateType>::normalAll(
     return beamSearch.run(emissions, 0, frames, rangeAdapter(startStates), hooks);
 }
 
-//auto SimpleDecoder::groupThreading(const float *emissions,
-//                                   const int frames,
-//                                   const int nTokens) const
-//    -> DecodeResult
-//{
-//    std::vector<std::vector<SimpleDecoderState>> hyp;
-//    hyp.resize(1);
+template <typename LM, typename LMStateType>
+template <typename BeamHooks>
+auto SimpleDecoder<LM, LMStateType>::groupThreading(
+        const float *emissions,
+        const int frames,
+        const int nTokens,
+        const std::vector<DecoderState> &startStates,
+        BeamHooks &hooks,
+        const int nThreads,
+        const int stepsPerFanout) const
+    -> typename Search::Result
+{
+    // Run Q-steps of beamseach on subgroups of hyp
+    int Q = stepsPerFanout;
+    int n_groups = nThreads;
 
-//    /* note: the lm reset itself with :start() */
-//    hyp[0].emplace_back(
-//                lm_->start(0), lexicon_->getRoot(), nullptr, 0.0, sil_, -1);
+    typename Search::Result result;
+    // essential to avoid reallocations
+    result.hyp.reserve((frames + 2) * n_groups);
+    result.hyp.push_back(startStates);
 
-//    // Run Q-steps of beamseach on subgroups of hyp
-//    int Q = 5;is
-//    int n_groups = 4;
+    std::vector<DecoderState> candidates;
+    float candidatesBestScore = -INFINITY;
+    std::vector<DecoderState> *startHyp = &result.hyp.back();
 
-//    // essential to avoid reallocations
-//    hyp.reserve((frames + 2) * n_groups);
+    #pragma omp parallel num_threads(nThreads)
+    {
+        int t = 0;
 
-//    std::vector<SimpleDecoderState> candidates;
-//    float candidatesBestScore = -INFINITY;
+        Search beamSearch{
+            .opt_ = opt_,
+            .transitions_ = transitions_,
+            .lm_ = lm_,
+            .sil_ = sil_,
+            .unk_ = unk_,
+            .nTokens_ = nTokens,
+        };
+        // beamSearch.opt_.beamSize /= 4; // users are expected to reduce beamSize if they want to
 
-//    std::vector<SimpleDecoderState> *startHyp = &hyp.back();
+        while (t < frames) {
+            int steps = std::min(Q, frames - t);
 
-//    #pragma omp parallel num_threads(4)
-//    {
-//        int t = 0;
+            #pragma omp for
+            for (size_t group = 0; group < n_groups; ++group) {
+                auto subResult = beamSearch.run(emissions, t, steps, rangeAdapter(*startHyp, group, n_groups));
 
-//        BeamSearch beamSearch{
-//            .opt_ = opt_,
-//            .transitions_ = transitions_,
-//            .lexicon_ = lexicon_->getRoot(),
-//            .lm_ = lm_,
-//            .sil_ = sil_,
-//            .unk_ = unk_,
-//            .nTokens_ = nTokens,
-//            .commands_ = commands_,
-//        };
-//        beamSearch.opt_.beamSize /= 4;
+                #pragma omp critical
+                {
+                    // need to save the individual beam's hyp_ because parent points into these arrays
+                    for (int i = 1; i < steps; ++i)
+                        result.hyp.emplace_back(std::move(subResult.hyp[i]));
 
-//        while (t < frames) {
-//            int steps = std::min(Q, frames - t);
+                    // collect final hyps together for reduction
+                    candidates.insert(candidates.end(),
+                                      std::make_move_iterator(std::begin(subResult.hyp[steps])),
+                                      std::make_move_iterator(std::end(subResult.hyp[steps])));
 
-//            #pragma omp for
-//            for (size_t group = 0; group < n_groups; ++group) {
-//                auto result = beamSearch.run(emissions, t, steps, rangeAdapter(*startHyp, group, n_groups));
+                    // get best score too
+                    candidatesBestScore = std::max(candidatesBestScore, subResult.bestBeamScore);
+                }
+            }
 
-//                #pragma omp critical
-//                {
-//                    // need to save the individual beam's hyp_ because parent points into these arrays
-//                    for (int i = 1; i < steps; ++i)
-//                        hyp.emplace_back(std::move(result.hyp[i]));
+            #pragma omp barrier
+            #pragma omp single
+            {
+                std::vector<DecoderState> newHyp;
+                beamSearchSelectBestCandidates(newHyp, candidates,
+                                               candidatesBestScore - opt_.beamThreshold, lm_, opt_.beamSize);
+                candidates.clear();
+                result.hyp.emplace_back(std::move(newHyp));
+                result.bestBeamScore = candidatesBestScore;
+                candidatesBestScore = -INFINITY;
+                startHyp = &result.hyp.back();
+            }
 
-//                    // collect final hyps together for reduction
-//                    candidates.insert(candidates.end(),
-//                                      std::make_move_iterator(std::begin(result.hyp[steps])),
-//                                      std::make_move_iterator(std::end(result.hyp[steps])));
+            t += steps;
+        }
+    }
 
-//                    // get best score too
-//                    candidatesBestScore = std::max(candidatesBestScore, result.bestBeamScore);
-//                }
-//            }
-
-//            #pragma omp barrier
-//            #pragma omp single
-//            {
-//                std::vector<SimpleDecoderState> newHyp;
-//                beamSearchSelectBestCandidates(newHyp, candidates,
-//                                               candidatesBestScore - opt_.beamThreshold, lm_, opt_.beamSize);
-//                candidates.clear();
-//                candidatesBestScore = -INFINITY;
-//                hyp.emplace_back(std::move(newHyp));
-//                startHyp = &hyp.back();
-//            }
-
-//            t += steps;
-//        }
-//    }
-
-//    std::vector<SimpleDecoderState> result;
-//    beamSearchFinish(result, hyp.back(), lm_, opt_);
-
-//    return getHypothesis(&result[0], frames + 1);
-//}
+    return result;
+}
 
 //struct DiversityScoreAdjustment
 //{

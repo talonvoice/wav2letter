@@ -528,12 +528,23 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     DFALM::State commandState;
     commandState.grammarLex = dfalm.dfa;
 
+
     // in the future we could stop the decode after one word instead of
     // decoding everything
     int decodeLen = N;
     std::vector<CombinedDecoder::DecoderState> startStates;
     startStates.emplace_back(commandState, nullptr, 0.0, 0, -1);
-    auto unfinishedBeams = commandDecoder.normalAll(emissionVec.data(), decodeLen, T, startStates, rejecter);
+
+    auto unfinishedBeams = [&]() {
+        const auto parallelBeamsearch = false;
+        if (!parallelBeamsearch)
+            return commandDecoder.normalAll(emissionVec.data(), decodeLen, T, startStates, rejecter);
+
+        int nThreads = 4;
+        int stepsPerFanout = 5;
+        commandDecoder.opt_.beamSize = decoderObj->decoderOpt.beamSize / nThreads;
+        return commandDecoder.groupThreading(emissionVec.data(), decodeLen, T, startStates, rejecter, nThreads, stepsPerFanout);
+    }();
 
     // Finishing kills beams that end in the middle of a word, or
     // in a grammar state that isn't TERM
@@ -545,7 +556,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
     if (opts->debug) {
         for (const auto &beamEnd : beamEnds) {
-            auto decodeResult = getHypothesis(&beamEnd, unfinishedBeams.hyp.size());
+            auto decodeResult = getHypothesis(&beamEnd, decodeLen + 1);
 
             auto decoderToks = decodeResult.tokens;
             decoderToks.erase(decoderToks.begin()); // initial hyp token
