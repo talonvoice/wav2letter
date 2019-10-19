@@ -58,24 +58,28 @@ DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts) {
                 CriterionType::ASG);
 }
 
+std::vector<std::string> loadWordList(const char *path) {
+    std::vector<std::string> result;
+    result.reserve(100000);
+    result.push_back("<unk>");
+
+    std::ifstream infile(path);
+    std::string line;
+    while (std::getline(infile, line)) {
+        result.push_back(line.substr(0, line.find(" ")));
+    }
+
+    return result;
+}
+
 class WrapDecoder {
 public:
     WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath, const char *flattriePath, const w2l_decode_options *opts) {
         tokenDict = engine->tokenDict;
         silIdx = tokenDict.getIndex(kSilToken);
 
-        auto lexicon = loadWords(lexiconPath, -1);
-
-        // Adjust the lexicon words to always end in silence
-        for (auto &entry : lexicon) {
-            for (auto &spelling : entry.second) {
-                if (spelling.empty() || spelling.back() != "|")
-                    spelling.push_back("|");
-            }
-        }
-
-        wordDict = createWordDict(lexicon);
-        lm = std::make_shared<KenLM>(languageModelPath, wordDict);
+        wordList = loadWordList(lexiconPath);
+        lm = std::make_shared<KenLM>(languageModelPath, wordList);
 
         // Load the trie
         std::ifstream flatTrieIn(flattriePath);
@@ -106,7 +110,7 @@ public:
             decoderOpt,
             lmWrap,
             silIdx,
-            wordDict.getIndex(kUnkToken),
+            unkLabel,
             transition});
     }
     ~WrapDecoder() {}
@@ -128,8 +132,11 @@ public:
     }
 
     char *resultWords(const DecodeResult &result) {
-        auto rawWordPrediction = validateIdx(result.words, wordDict.getIndex(kUnkToken));
-        auto wordPrediction = wrdIdx2Wrd(rawWordPrediction, wordDict);
+        auto rawWordPrediction = validateIdx(result.words, unkLabel);
+        std::vector<std::string> wordPrediction;
+        for (auto wrdIdx : rawWordPrediction) {
+            wordPrediction.push_back(wordList[wrdIdx]);
+        }
         auto words = join(" ", wordPrediction);
         return strdup(words.c_str());
     }
@@ -152,10 +159,11 @@ public:
     std::shared_ptr<KenLM> lm;
     FlatTriePtr flatTrie;
     std::unique_ptr<SimpleDecoder<KenFlatTrieLM::LM, KenFlatTrieLM::State>> decoder;
-    Dictionary wordDict;
+    std::vector<std::string> wordList;
     Dictionary tokenDict;
     DecoderOptions decoderOpt;
     int silIdx;
+    int unkLabel = 0;
 };
 
 namespace DFALM {
@@ -485,13 +493,13 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
     auto dfalm = DFALM::LM{decoderObj->lm, decoderObj->flatTrie, dfa};
     dfalm.commandScore = opts->command_score;
-    dfalm.firstCommandLabel = decoderObj->wordDict.indexSize();
+    dfalm.firstCommandLabel = decoderObj->wordList.size();
 
     auto commandDecoder = CombinedDecoder{
                 decoderObj->decoderOpt,
                 dfalm,
                 decoderObj->silIdx,
-                decoderObj->wordDict.getIndex(kUnkToken),
+                decoderObj->unkLabel,
                 transitions};
 
     if (opts->debug) {
@@ -556,7 +564,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     for (int i = 0; i < decodeResult.words.size(); ++i) {
         const auto label = decodeResult.words[i];
         if (label >= 0 && label < dfalm.firstCommandLabel) {
-            result = appendSpaced(result, decoderObj->wordDict.getEntry(label), false);
+            result = appendSpaced(result, decoderObj->wordList[label], false);
         } else if (label >= dfalm.firstCommandLabel) {
             result = appendSpaced(result, tokensToStringDedup(decodeResult.tokens, lastSilence + 1, i), true);
         }
@@ -578,6 +586,7 @@ bool w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, co
     auto silIdx = tokenDict.getIndex(kSilToken);
 
     auto lexicon = loadWords(lexicon_path, -1);
+    auto wordList = loadWordList(lexicon_path);
 
     // Adjust the lexicon words to always end in silence
     for (auto &entry : lexicon) {
@@ -587,7 +596,12 @@ bool w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, co
         }
     }
 
-    auto wordDict = createWordDict(lexicon);
+    Dictionary wordDict;
+    for (const auto& it : wordList) {
+      wordDict.addEntry(it);
+    }
+    wordDict.setDefaultIndex(wordDict.getIndex(kUnkToken));
+
     auto lm = std::make_shared<KenLM>(kenlm_model_path, wordDict);
 
     // taken from Decode.cpp

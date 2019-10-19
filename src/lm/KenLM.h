@@ -36,6 +36,7 @@ using KenLMState = lm::ngram::State;
 class KenLM : public LM {
  public:
   KenLM(const std::string& path, const Dictionary& usrTknDict);
+  KenLM(const std::string& path, const std::vector<std::string> &usrTknList);
 
   LMStatePtr start(bool startWithNothing) override;
 
