@@ -542,8 +542,8 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
 
         int nThreads = 4;
         int stepsPerFanout = 5;
-        commandDecoder.opt_.beamSize = decoderObj->decoderOpt.beamSize / nThreads;
-        return commandDecoder.groupThreading(emissionVec.data(), decodeLen, T, startStates, rejecter, nThreads, stepsPerFanout);
+        int threadBeamSize = commandDecoder.opt_.beamSize / nThreads;
+        return commandDecoder.groupThreading(emissionVec.data(), decodeLen, T, startStates, rejecter, nThreads, stepsPerFanout, threadBeamSize);
     }();
 
     // Finishing kills beams that end in the middle of a word, or

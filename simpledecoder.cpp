@@ -485,7 +485,8 @@ struct SimpleDecoder
                         const std::vector<DecoderState> &startStates,
                         BeamHooks &hooks,
                         const int nThreads,
-                        const int stepsPerFanout) const
+                        const int stepsPerFanout,
+                        const int threadBeamSize) const
         -> typename Search::Result;
 
 //    DecodeResult diversity(const float *emissions,
@@ -554,7 +555,8 @@ auto SimpleDecoder<LM, LMStateType>::groupThreading(
         const std::vector<DecoderState> &startStates,
         BeamHooks &hooks,
         const int nThreads,
-        const int stepsPerFanout) const
+        const int stepsPerFanout,
+        const int threadBeamSize) const
     -> typename Search::Result
 {
     // Run Q-steps of beamseach on subgroups of hyp
@@ -582,7 +584,7 @@ auto SimpleDecoder<LM, LMStateType>::groupThreading(
             .unk_ = unk_,
             .nTokens_ = nTokens,
         };
-        // beamSearch.opt_.beamSize /= 4; // users are expected to reduce beamSize if they want to
+        beamSearch.opt_.beamSize = threadBeamSize;
 
         while (t < frames) {
             int steps = std::min(Q, frames - t);
