@@ -3,6 +3,7 @@ extern "C" {
 #endif
 
 #include <stdlib.h>
+#include <stdbool.h>
 
 typedef struct w2l_engine w2l_engine;
 typedef struct w2l_decoder w2l_decoder;

@@ -71,8 +71,7 @@ Emission *Engine::process(float *samples, size_t sample_count) {
     return new Emission(this, rawEmission.array(), input);
 }
 
-af::array Engine::process(const af::array &features)
-{
+af::array Engine::process(const af::array &features) {
     return network->forward({fl::input(features)}).front().array();
 }
 
@@ -85,6 +84,8 @@ bool Engine::exportModel(const char *path) {
     }
 
     auto seq = dynamic_cast<fl::Sequential *>(network.get());
+    exportTokens(outfile);
+    exportTransitions(outfile);
     for (auto &module : seq->modules()) {
         if (!exportLayer(outfile, module.get())) {
             std::cout << "[w2lapi] aborting export" << std::endl;
@@ -94,41 +95,66 @@ bool Engine::exportModel(const char *path) {
     return true;
 }
 
-std::vector<float> Engine::transitions() const
-{
+std::vector<float> Engine::transitions() const {
     return afToVector<float>(criterion->param(0).array());
 }
 
-af::array Engine::viterbiPath(const af::array &data) const
-{
+af::array Engine::viterbiPath(const af::array &data) const {
     return criterion->viterbiPath(data);
 }
 
-std::tuple<int, int> Engine::splitOn(std::string s, std::string on) {
+void trim(std::string &s, std::string needle) {
+    s.erase(s.find_last_not_of(needle)+1);
+    s.erase(s.begin(), s.begin() + s.find_first_not_of(needle));
+}
+
+std::tuple<std::string, std::string> Engine::splitOn(std::string s, std::string on) {
     auto split = s.find(on);
     auto first = s.substr(0, split);
     auto second = s.substr(split + on.size());
-    // std::cout << "string [" << s << "] on [" << on << "] first " << first << " second " << second << std::endl;
-    return {std::stoi(first), std::stoi(second)};
+    trim(first, ", ");
+    trim(second, ", ");
+    return {first, second};
 }
 
 std::string Engine::findParens(std::string s) {
     auto start = s.find('(');
     auto end = s.find(')', start);
     auto sp = s.substr(start + 1, end - start - 1);
-    // std::cout << "string split [" << s << "] " << start << " " << end << " [" << sp << "]" << std::endl;
     return sp;
 }
 
 void Engine::exportParams(std::ofstream& f, fl::Variable params) {
     auto array = afToVector<float>(params.array());
-    for (auto& p : array) {
+    for (float& p : array) {
         f << std::hex << (uint32_t&)p;
         if (&p != &array.back()) {
             f << " ";
         }
     }
     f << std::dec;
+}
+
+void Engine::exportTokens(std::ofstream& f) {
+    std::cout << "[w2lapi] exporting: tokens" << std::endl;
+    f << "TOK ";
+    for (int i = 0; i < tokenDict.indexSize(); i++) {
+        if (i > 0) f << ";";
+        std::string entry = tokenDict.getEntry(i);
+        for (int i = 0; i < entry.size(); i++) {
+            if (i > 0) f << ",";
+            f << std::hex << (unsigned int)entry[i];
+        }
+    }
+    f << std::dec;
+    f << "\n";
+}
+
+void Engine::exportTransitions(std::ofstream& f) {
+    std::cout << "[w2lapi] exporting: transitions" << std::endl;
+    f << "ASG ";
+    exportParams(f, criterion->param(0));
+    f << "\n";
 }
 
 bool Engine::exportLayer(std::ofstream& f, fl::Module *module) {
@@ -156,7 +182,7 @@ bool Engine::exportLayer(std::ofstream& f, fl::Module *module) {
         // Conv2D (234->514, 23x1, 1,1, 0,0, 1, 1) (with bias)
         auto parens = findParens(pretty);
         bool bias = pretty.find("with bias") >= 0;
-        int inputs, outputs, szX, szY, padX, padY, strideX, strideY, dilateX, dilateY;
+        std::string inputs, outputs, szX, szY, padX, padY, strideX, strideY, dilateX, dilateY;
         // TODO: I could get some of these from the params' dims instead of string parsing...
 
         auto comma1 = parens.find(',') + 1;
@@ -185,7 +211,7 @@ bool Engine::exportLayer(std::ofstream& f, fl::Module *module) {
         }
         f << "\n";
     } else if (type == "Linear") {
-        int inputs, outputs;
+        std::string inputs, outputs;
         std::tie(inputs, outputs) = splitOn(findParens(pretty), "->");
         f << "L " << inputs << " " << outputs << " | ";
         exportParams(f, module->param(0));

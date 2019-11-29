@@ -156,5 +156,8 @@ target_include_directories(
   ${FLASHLIGHT_INCLUDE_DIRS}
 )
 
+add_executable(w2lexport w2lexport.c)
+target_link_libraries(w2lexport w2l)
+
 install(TARGETS w2l DESTINATION lib)
 install(FILES w2l.h DESTINATION include)

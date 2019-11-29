@@ -48,12 +48,10 @@ public:
     af::array viterbiPath(const af::array &data) const;
 
 private:
-    std::tuple<int, int> splitOn(std::string s, std::string on);
-
+    std::tuple<std::string, std::string> splitOn(std::string s, std::string on);
     std::string findParens(std::string s);
-
     void exportParams(std::ofstream& f, fl::Variable params);
-
     bool exportLayer(std::ofstream& f, fl::Module *module);
+    void exportTransitions(std::ofstream& f);
+    void exportTokens(std::ofstream& f);
 };
-
