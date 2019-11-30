@@ -200,10 +200,17 @@ bool Engine::exportLayer(std::ofstream& f, fl::Module *module) {
         auto comma8 = parens.find(',', parens.find(',', comma6) + 1) + 1;
         std::tie(dilateX, dilateY) = splitOn(parens.substr(comma6, comma8 - comma6 - 1), ",");
 
-        // FIXME we're ignoring everything after padX because I don't know the actual spec
-        // string split [Conv2D (40->200, 13x1, 1,1, 170,0, 1, 1) (with bias)] 7 39 [40->200, 13x1, 1,1, 170,0, 1, 1]
-        // fl::Conv2D C2 [inputChannels] [outputChannels] [xFilterSz] [yFilterSz] [xStride] [yStride] [xPadding <OPTIONAL>] [yPadding <OPTIONAL>] [xDilation <OPTIONAL>] [yDilation <OPTIONAL>]
-        f << "C " << inputs << " " << outputs << " " << szX << " " << szY << " " << padX << " | ";
+        // fl::Conv1D? C  [inputChannels] [outputChannels] [xFilterSz] [xStride] [xPadding <OPTIONAL>] [xDilation <OPTIONAL>]
+        // fl::Conv2D  C2 [inputChannels] [outputChannels] [xFilterSz] [yFilterSz] [xStride] [yStride] [xPadding <OPTIONAL>] [yPadding <OPTIONAL>] [xDilation <OPTIONAL>] [yDilation <OPTIONAL>]
+        if (szY == "1") {
+            f << "C "  << inputs << " " << outputs << " " << szX << " " << strideX << " " << padX << " " << dilateX << " | ";
+        } else {
+            f << "C2 " << inputs  << " " << outputs
+                << " " << szX     << " " << szY
+                << " " << strideX << " " << strideY
+                << " " << padX    << " " << padY
+                << " " << dilateX << " " << dilateY << " | ";
+        }
         exportParams(f, module->param(0));
         if (bias) {
             f << " | ";
