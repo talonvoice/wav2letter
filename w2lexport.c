@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 #include "w2l.h"
 
 int main(int argc, char **argv) {
