@@ -157,7 +157,7 @@ target_include_directories(
 )
 
 add_executable(w2lexport w2lexport.c)
-target_link_libraries(w2lexport w2l)
+target_link_libraries(w2lexport w2l bz2 z)
 
 install(TARGETS w2l DESTINATION lib)
 install(FILES w2l.h DESTINATION include)
