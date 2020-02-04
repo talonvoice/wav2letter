@@ -143,6 +143,8 @@ target_link_libraries(w2l
     ${GLOG_LIBRARIES}
     ${LIBOMP}
     lzma
+    bz2
+    z
 )
 if (APPLE)
     target_link_libraries(w2l -Wl,-cache_path_lto,/tmp/lto-cache)
@@ -157,7 +159,7 @@ target_include_directories(
 )
 
 add_executable(w2lexport w2lexport.c)
-target_link_libraries(w2lexport w2l bz2 z)
+target_link_libraries(w2lexport w2l)
 
 install(TARGETS w2l DESTINATION lib)
 install(FILES w2l.h DESTINATION include)
