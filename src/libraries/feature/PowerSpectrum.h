@@ -10,12 +10,12 @@
 
 #include <mutex>
 
-#include <fftw3.h>
-
 #include "Dither.h"
 #include "FeatureParams.h"
 #include "PreEmphasis.h"
 #include "Windowing.h"
+
+#include <ipp.h>
 
 namespace w2l {
 
@@ -54,8 +54,14 @@ class PowerSpectrum {
   PreEmphasis preEmphasis_;
   Windowing windowing_;
 
-  fftw_plan fftPlan_;
-  std::vector<double> inFftBuf_, outFftBuf_;
+  std::vector<Ipp64f> inFftBuf_;
+  std::vector<Ipp64fc> outFftBuf_;
   std::mutex fftMutex_;
+
+  Ipp8u *m_memBuffer;
+  Ipp8u *m_memSpec;
+  IppsFFTSpec_R_64f *m_fftSpec;
+  Ipp64f *m_outPerm;
+  Ipp64fc *m_outComplex;
 };
 } // namespace w2l
