@@ -1,3 +1,5 @@
+// Replace https://github.com/facebookresearch/wav2letter/blob/master/inference/inference/module/nn/backend/fbgemm/PackedGemmMatrixFP16.h
+
 /**
  * Copyright (c) Facebook, Inc. and its affiliates.
  * All rights reserved.
@@ -52,14 +54,14 @@ void load(
     std::shared_ptr<fbgemm::PackedGemmMatrixFP16>& packedMatrix) {
   int numRows = 0;
   int numCols = 0;
-
-  // The following params are unused but kept for backward compatibility
   int blockRowSize = 0;
   int lastBrow = 0;
   int blockColSize = 0;
   int numBrow = 0;
   int numBcol = 0;
   int matSize = 0;
+
+  constexpr float alpha = 1.0;
 
   ar(numRows,
      numCols,
@@ -78,7 +80,6 @@ void load(
     tempBufFp32[i] = fbgemm::cpu_half2float(tempBufFp16[i]);
   }
 
-  constexpr float alpha = 1.0;
   packedMatrix = std::make_shared<fbgemm::PackedGemmMatrixFP16>(
       fbgemm::matrix_op_t::NoTranspose,
       numRows,
