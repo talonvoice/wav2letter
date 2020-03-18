@@ -10,14 +10,11 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <chrono>
+#include <iostream>
 
-extern "C" {
-#if W2L_LIBRARIES_USE_MKL
-#include <mkl_cblas.h>
-#else
-#include <cblas.h>
-#endif
-}
+#include <fbgemm/FbgemmFP16.h>
+#include <omp.h>
 
 namespace w2l {
 
@@ -53,21 +50,14 @@ std::vector<float> cblasGemm(
 
   std::vector<float> matC(m * n);
 
-  cblas_sgemm(
-      CblasRowMajor,
-      CblasNoTrans,
-      CblasNoTrans,
-      m,
-      n,
-      k,
-      1.0, // alpha
-      matA.data(),
-      k,
-      matB.data(),
-      n,
-      0.0, // beta
-      matC.data(),
-      n);
+  fbgemm::PackedGemmMatrixFP16 Bp(fbgemm::matrix_op_t::NoTranspose, k, n, 1.0, matB.data());
+#pragma omp parallel
+    {
+      int num_threads = omp_get_num_threads();
+      int tid = omp_get_thread_num();
+      cblas_gemm_compute(fbgemm::matrix_op_t::NoTranspose, m, matA.data(), Bp, 0.0, matC.data(), tid, num_threads);
+    }
+
   return matC;
 };
 } // namespace w2l
