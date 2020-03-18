@@ -82,6 +82,7 @@ target_link_libraries(w2lstream
     cpuinfo
     asmjit
     clog
+    pthread
 )
 if (APPLE)
     target_link_libraries(w2lstream -Wl,-cache_path_lto,/tmp/lto-cache)
