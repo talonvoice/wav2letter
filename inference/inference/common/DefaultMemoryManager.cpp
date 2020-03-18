@@ -9,6 +9,7 @@
 #include "inference/common/DefaultMemoryManager.h"
 
 #include <cstdlib>
+#include <string>
 
 namespace w2l {
 namespace streaming {
