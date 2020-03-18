@@ -12,7 +12,7 @@ int main(int argc, const char *argv[]) {
         return 1;
     }
 
-    int chunk_size = 1000 * 16000 / 1000;
+    int chunk_size = 1000 * 16000 / 500;
     w2lstream *stream = w2lstream_new(argv[1], argv[2], argv[3], chunk_size);
 
     int16_t *buffer = calloc(chunk_size * sizeof(int16_t), 1);
