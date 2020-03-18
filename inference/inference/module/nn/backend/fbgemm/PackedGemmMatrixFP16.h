@@ -1,3 +1,5 @@
+// Replace https://github.com/facebookresearch/wav2letter/blob/master/inference/inference/module/nn/backend/fbgemm/PackedGemmMatrixFP16.h
+
 /**
  * Copyright (c) Facebook, Inc. and its affiliates.
  * All rights reserved.
@@ -59,6 +61,8 @@ void load(
   int numBcol = 0;
   int matSize = 0;
 
+  constexpr float alpha = 1.0;
+
   ar(numRows,
      numCols,
      blockRowSize,
@@ -67,19 +71,21 @@ void load(
      numBrow,
      numBcol,
      matSize);
+
+  std::vector<fbgemm::float16> tempBufFp16;
+  ar(tempBufFp16);
+
+  std::vector<float> tempBufFp32(numRows * numCols);
+  for (int i = 0; i < numRows * numCols; ++i) {
+    tempBufFp32[i] = fbgemm::cpu_half2float(tempBufFp16[i]);
+  }
+
   packedMatrix = std::make_shared<fbgemm::PackedGemmMatrixFP16>(
+      fbgemm::matrix_op_t::NoTranspose,
       numRows,
       numCols,
-      blockRowSize,
-      lastBrow,
-      blockColSize,
-      numBrow,
-      numBcol,
-      matSize);
-
-  std::vector<fbgemm::float16> tempBuf;
-  ar(tempBuf);
-  packedMatrix->packFromSrc(fbgemm::matrix_op_t::NoTranspose, tempBuf.data());
+      alpha,
+      tempBufFp32.data());
 }
 
 } // namespace cereal
