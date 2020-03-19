@@ -20,7 +20,6 @@ int main(int argc, const char *argv[]) {
     int wav_header_size = 44;
 
     fread(buffer, wav_header_size, 1, stdin);
-    bool first = true;
     while (!feof(stdin)) {
         size_t size = fread(buffer, 1, chunk_size * 2, stdin);
         if (size == 0)
@@ -28,11 +27,10 @@ int main(int argc, const char *argv[]) {
         for (ssize_t i = 0; i < size / 2; i++) {
             samples[i] = buffer[i] / 32768.0;
         }
-        char *text = w2lstream_run(stream, samples, size / 2);
+        char *text = w2lstream_run(stream, 1, samples, size / 2);
         if (strlen(text) > 0) {
-            if (first && *text == ' ') {
-                printf("%s", text + 1);
-                first = false;
+            if (text[0] == ' ') {
+                printf("%s ", text + 1);
             } else {
                 printf("%s", text);
             }
