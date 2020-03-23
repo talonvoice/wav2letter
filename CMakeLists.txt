@@ -12,13 +12,18 @@ add_definitions(-flto=thin)
 
 find_library(LIBOMP NAMES libomp.a)
 find_package(GFLAGS REQUIRED)
+find_package(kenlm REQUIRED)
+set(KENLM_MAX_ORDER 6 CACHE STRING "KENLM_MAX_ORDER")
+add_definitions(-DBMR_USE_QUICKSELECT -DKENLM_MAX_ORDER=${KENLM_MAX_ORDER})
 
 set(COMMON_SRC
     src/common/Defines.cpp
-    src/common/Dictionary.cpp
     src/common/Transforms.cpp
     src/common/Utils.cpp
-    src/common/Utils-base.cpp
+
+    src/libraries/common/Dictionary.cpp
+    src/libraries/common/Utils.cpp
+    src/libraries/common/WordUtils.cpp
 )
 
 set(FEATURE_SRC
@@ -35,27 +40,41 @@ set(FEATURE_SRC
     src/libraries/feature/Windowing.cpp
 )
 
+set(DECODER_SRC
+    src/libraries/decoder/LexiconDecoder.cpp
+    src/libraries/decoder/LexiconFreeDecoder.cpp
+    src/libraries/decoder/LexiconFreeSeq2SeqDecoder.cpp
+    src/libraries/decoder/LexiconSeq2SeqDecoder.cpp
+    src/libraries/decoder/Trie.cpp
+    src/libraries/decoder/Utils.cpp
+
+    src/libraries/lm/ConvLM.cpp
+    src/libraries/lm/KenLM.cpp
+    src/libraries/lm/ZeroLM.cpp
+)
+
 set(INFERENCE_SRC
-    inference/inference/module/InferenceModule.cpp
-    inference/inference/module/nn/Linear.cpp
-    inference/inference/module/nn/Residual.cpp
-    inference/inference/module/nn/LayerNorm.cpp
-    inference/inference/module/nn/TDSBlock.cpp
-    inference/inference/module/nn/Relu.cpp
-    inference/inference/module/nn/Sequential.cpp
-    inference/inference/module/nn/Identity.cpp
-    inference/inference/module/nn/backend/fbgemm/Conv1dFbGemm.cpp
-    inference/inference/module/nn/backend/fbgemm/LinearFbGemm.cpp
-    inference/inference/module/nn/backend/fbgemm/PackedGemmMatrixFP16.cpp
-    inference/inference/module/nn/Conv1d.cpp
-    inference/inference/module/nn/LocalNorm.cpp
-    inference/inference/module/ModuleProcessingState.cpp
-    inference/inference/module/ModuleParameter.cpp
-    inference/inference/module/feature/LogMelFeature.cpp
-    inference/inference/common/IOBuffer.cpp
     inference/inference/common/DataType.cpp
     inference/inference/common/DefaultMemoryManager.cpp
     inference/inference/common/Functions.cpp
+    inference/inference/common/IOBuffer.cpp
+    inference/inference/decoder/Decoder.cpp
+    inference/inference/module/InferenceModule.cpp
+    inference/inference/module/ModuleParameter.cpp
+    inference/inference/module/ModuleProcessingState.cpp
+    inference/inference/module/feature/LogMelFeature.cpp
+    inference/inference/module/nn/Conv1d.cpp
+    inference/inference/module/nn/Identity.cpp
+    inference/inference/module/nn/LayerNorm.cpp
+    inference/inference/module/nn/Linear.cpp
+    inference/inference/module/nn/LocalNorm.cpp
+    inference/inference/module/nn/Relu.cpp
+    inference/inference/module/nn/Residual.cpp
+    inference/inference/module/nn/Sequential.cpp
+    inference/inference/module/nn/TDSBlock.cpp
+    inference/inference/module/nn/backend/fbgemm/Conv1dFbGemm.cpp
+    inference/inference/module/nn/backend/fbgemm/LinearFbGemm.cpp
+    inference/inference/module/nn/backend/fbgemm/PackedGemmMatrixFP16.cpp
 )
 
 find_library(LIBIPPS NAMES libipps.a HINTS /opt/intel/ipp/lib)
@@ -64,14 +83,16 @@ find_library(LIBIPPCORE NAMES libippcore.a HINTS /opt/intel/ipp/lib)
 set(IPP_LIBS ${LIBIPPS} ${LIBIPPCORE} ${LIBIPPVM})
 
 add_library(w2lstream SHARED
+    ${COMMON_SRC}
     ${FEATURE_SRC}
     ${INFERENCE_SRC}
+    ${DECODER_SRC}
     w2lstream.cpp
 )
 target_link_libraries(w2lstream
-    ${IPP_LIBS}
-    ${LIBOMP}
     ${GFLAGS_LIBRARIES}
+    ${IPP_LIBS}
+    ${KENLM_LIBRARIES}
     ${LIBOMP}
     lzma
     bz2
@@ -95,6 +116,7 @@ target_include_directories(
   PUBLIC
   ${PROJECT_SOURCE_DIR}/src
   ${fbgemm_INCLUDE_DIRS}
+  ${KENLM_INCLUDE_DIRS}
 )
 
 add_executable(wavstream wavstream.c)
