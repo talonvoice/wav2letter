@@ -226,6 +226,7 @@ target_link_libraries(w2lstream
 if (APPLE)
     target_link_libraries(w2lstream -Wl,-cache_path_lto,/tmp/lto-cache)
     add_definitions(-Xpreprocessor -fopenmp)
+    target_link_libraries(w2lstream "-framework Accelerate")
 endif()
 
 target_include_directories(
