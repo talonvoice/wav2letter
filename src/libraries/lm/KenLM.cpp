@@ -34,6 +34,25 @@ KenLM::KenLM(const std::string& path, const Dictionary& usrTknDict) {
   }
 }
 
+KenLM::KenLM(const std::string& path, const std::vector<std::string>& usrTknList) {
+  // Load LM
+  model_.reset(lm::ngram::LoadVirtual(path.c_str()));
+  if (!model_) {
+    throw std::runtime_error("[KenLM] LM loading failed.");
+  }
+  vocab_ = &model_->BaseVocabulary();
+  if (!vocab_) {
+    throw std::runtime_error("[KenLM] LM vocabulary loading failed.");
+  }
+
+  // Create index map
+  usrToLmIdxMap_.resize(usrTknList.size());
+  for (int i = 0; i < usrTknList.size(); i++) {
+    int lmIdx = vocab_->Index(usrTknList[i].c_str());
+    usrToLmIdxMap_[i] = lmIdx;
+  }
+}
+
 LMStatePtr KenLM::start(bool startWithNothing) {
   auto outState = std::make_shared<KenLMState>();
   if (startWithNothing) {

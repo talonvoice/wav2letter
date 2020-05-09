@@ -22,24 +22,12 @@ struct W2lSerializer {
  public:
   template <class... Args>
   static void save(const std::string& filepath, const Args&... args) {
-    retryWithBackoff(
-        std::chrono::seconds(1),
-        2.0,
-        6,
-        saveImpl<Args...>,
-        filepath,
-        args...); // max wait 31s
+    saveImpl<Args...>(filepath, args...);
   }
 
   template <typename... Args>
   static void load(const std::string& filepath, Args&... args) {
-    retryWithBackoff(
-        std::chrono::seconds(1),
-        2.0,
-        6,
-        loadImpl<Args...>,
-        filepath,
-        args...); // max wait 31s
+    loadImpl<Args...>(filepath, args...);
   }
 
  private:
