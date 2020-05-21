@@ -171,9 +171,6 @@ target_link_libraries(w2l
     ${GFLAGS_LIBRARIES}
     ${GLOG_LIBRARIES}
     ${LIBOMP}
-    lzma
-    bz2
-    z
 
     # fbgemm
     fbgemm
@@ -211,9 +208,6 @@ target_link_libraries(w2lstream
     ${IPP_LIBS}
     ${KENLM_LIBRARIES}
     ${LIBOMP}
-    lzma
-    bz2
-    z
 
     # fbgemm
     fbgemm
