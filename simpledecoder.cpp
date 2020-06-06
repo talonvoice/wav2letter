@@ -371,7 +371,7 @@ auto BeamSearch<LM, LMStateType>::run(
                 if (frame > 0 && transitions_.size() > 0) {
                     score += transitions_[n * nTokens_ + prevIdx];
                 }
-                if (n == sil_) {
+                if (n == sil_ || n == blank_) {
                     score += opt_.silScore;
                 }
                 score += hooks.extraNewTokenScore(frame, prevHyp, n);
@@ -433,7 +433,7 @@ auto BeamSearch<LM, LMStateType>::run(
                 if (frame > 0 && transitions_.size() > 0) {
                     score += transitions_[n * nTokens_ + prevIdx];
                 }                
-                if (n == sil_) {
+                if (n == sil_ || n == blank_) {
                     score += opt_.silScore;
                 }
                 score += hooks.extraNewTokenScore(frame, prevHyp, n);
@@ -453,7 +453,7 @@ auto BeamSearch<LM, LMStateType>::run(
             /* CTC only, try blank */
             if (opt_.criterionType == CriterionType::CTC) {
                 int n = blank_;
-                double score = prevHyp.score + emissions[frame * nTokens_ + n];
+                double score = prevHyp.score + emissions[frame * nTokens_ + n] + opt_.silScore;
                 beamSearchNewCandidate(
                         candidates,
                         candidatesBestScore,
