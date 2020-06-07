@@ -34,7 +34,8 @@ std::vector<T> afToVector(const af::array& arr) {
 }
 
 w2l_decode_options w2l_decode_defaults {
-    2500,
+    500,
+    100,
     25,
     1.0,
     1.0,

@@ -12,6 +12,7 @@ typedef struct w2l_emission w2l_emission;
 
 typedef struct {
     int beamsize;
+    int beamsizetoken;
     float beamthresh;
     float lmweight;
     float wordscore;
