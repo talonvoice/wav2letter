@@ -164,7 +164,7 @@ template <typename LMStateType1, typename LMStateType2>
 static void beamSearchNewCandidate(
         std::vector<SimpleDecoderState<LMStateType2>> &candidates,
         float &bestScore,
-        const float beamThreshold,
+        const DecoderOptions &opt,
         LMStateType1 lmState,
         const SimpleDecoderState<LMStateType2>* parent,
         const float score,
@@ -172,11 +172,21 @@ static void beamSearchNewCandidate(
         const int word,
         const bool prevBlank = false)
 {
-    if (score < bestScore - beamThreshold)
+    if (score < bestScore - opt.beamThreshold)
         return;
+    if (candidates.size() >= opt.beamSize * 2 && candidates[0].score > score) {
+        return;
+    }
     bestScore = std::max(bestScore, score);
     candidates.emplace_back(
             std::move(lmState.actualize()), parent, score, token, word, prevBlank);
+    if (candidates.size() == opt.beamSize * 2) {
+        // saves us a push + pop
+        std::pop_heap(candidates.begin(), candidates.end(), std::greater());
+        candidates.pop_back();
+    } else {
+        std::push_heap(candidates.begin(), candidates.end(), std::greater());
+    }
 }
 
 // Take at most beamSize items from candidates and fill nextHyp.
@@ -230,7 +240,7 @@ static void beamSearchFinish(
         beamSearchNewCandidate(
                     candidates,
                     candidatesBestScore,
-                    opt.beamThreshold,
+                    opt,
                     lmStateScorePair.first,
                     &prevHyp,
                     prevHyp.score + opt.lmWeight * lmStateScorePair.second,
@@ -384,7 +394,7 @@ auto BeamSearch<LM, LMStateType>::run(
                     beamSearchNewCandidate(
                             candidates,
                             candidatesBestScore,
-                            opt_.beamThreshold,
+                            opt_,
                             std::move(labelLmState),
                             &prevHyp,
                             lScore,
@@ -399,7 +409,7 @@ auto BeamSearch<LM, LMStateType>::run(
                     beamSearchNewCandidate(
                             candidates,
                             candidatesBestScore,
-                            opt_.beamThreshold,
+                            opt_,
                             std::move(lmState),
                             &prevHyp,
                             lScore,
@@ -415,7 +425,7 @@ auto BeamSearch<LM, LMStateType>::run(
                     beamSearchNewCandidate(
                             candidates,
                             candidatesBestScore,
-                            opt_.beamThreshold,
+                            opt_,
                             lmScoreReturn.first,
                             &prevHyp,
                             score + opt_.lmWeight * (lmScoreReturn.second - prevMaxScore) + opt_.unkScore,
@@ -441,7 +451,7 @@ auto BeamSearch<LM, LMStateType>::run(
                 beamSearchNewCandidate(
                         candidates,
                         candidatesBestScore,
-                        opt_.beamThreshold,
+                        opt_,
                         prevLmState,
                         &prevHyp,
                         score,
@@ -457,7 +467,7 @@ auto BeamSearch<LM, LMStateType>::run(
                 beamSearchNewCandidate(
                         candidates,
                         candidatesBestScore,
-                        opt_.beamThreshold,
+                        opt_,
                         prevLmState,
                         &prevHyp,
                         score,
