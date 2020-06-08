@@ -75,11 +75,13 @@ namespace KenFlatTrieLM {
         // Iterate over children of the state, calling fn with:
         // new State (or a Proxy), new token index and whether the new state has children
         template <typename Fn>
-        bool forChildren(int frame, const LM &lm, Fn&& fn) const {
+        bool forChildren(int frame, std::vector<int> &indices, const LM &lm, Fn&& fn) const {
             const auto n = lex->nChildren;
             for (int i = 0; i < n; ++i) {
                 auto nlex = lex->child(i);
-                fn(Proxy{*this, nlex}, nlex->idx, nlex->nChildren > 0);
+                if (std::binary_search(indices.begin(), indices.end(), nlex->idx)) {
+                    fn(Proxy{*this, nlex}, nlex->idx, nlex->nChildren > 0);
+                }
             }
             return true;
         }
@@ -336,9 +338,22 @@ auto BeamSearch<LM, LMStateType>::run(
     candidates.reserve(opt_.beamSize);
     float candidatesBestScore = kNegativeInfinity;
 
+    std::vector<int> indices(nTokens_);
     for (int t = 0; t < frames; t++) {
         // std::cout << "\nframe: " << t << "\n";
         int frame = startFrame + t;
+        indices.resize(nTokens_);
+        std::iota(indices.begin(), indices.end(), 0);
+        if (nTokens_ > opt_.beamSizeToken) {
+            std::partial_sort(
+                indices.begin(),
+                indices.begin() + opt_.beamSizeToken,
+                indices.end(),
+                [&](const int& left, const int& right) {
+                    return emissions[frame * nTokens_ + left] > emissions[frame * nTokens_ + right];
+                });
+            indices.resize(opt_.beamSizeToken);
+        }
         candidates.clear();
 
         float maxEmissionScore = -INFINITY;
@@ -378,7 +393,7 @@ auto BeamSearch<LM, LMStateType>::run(
 
             const float prevMaxScore = prevLmState.maxWordScore();
             /* (1) Try children */
-            repeatPrevLex &= prevLmState.forChildren(t, lm_, [&, prevIdx, prevMaxScore](auto lmState, int n, bool hasChildren) {
+            repeatPrevLex &= prevLmState.forChildren(t, indices, lm_, [&, prevIdx, prevMaxScore](auto lmState, int n, bool hasChildren) {
                 if (n == prevIdx && (opt_.criterionType != CriterionType::CTC || !prevHyp.getPrevBlank()))
                     repeatPrevLex = false;
                 float score = prevHyp.score + emissions[frame * nTokens_ + n];
@@ -446,7 +461,7 @@ auto BeamSearch<LM, LMStateType>::run(
                 float score = prevHyp.score + emissions[frame * nTokens_ + n];
                 if (frame > 0 && transitions_.size() > 0) {
                     score += transitions_[n * nTokens_ + prevIdx];
-                }                
+                }
                 if (n == sil_ || n == blank_) {
                     score += opt_.silScore;
                 }
@@ -480,9 +495,7 @@ auto BeamSearch<LM, LMStateType>::run(
                         true // prevBlank
                         );
             }
-
         }
-
         beamSearchSelectBestCandidates(hyp[t + 1], candidates, candidatesBestScore - opt_.beamThreshold, lm_, opt_.beamSize);
     }
 
