@@ -540,8 +540,10 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     // Lets skip decoding if viterbi thinks it's all silence
     bool allSilence = true;
     for (auto t : viterbiToks) {
-        if (t != decoderObj->silIdx)
+        if (t != decoderObj->silIdx && t != decoderObj->blankIdx) {
             allSilence = false;
+            break;
+        }
     }
     if (allSilence)
         return nullptr;
