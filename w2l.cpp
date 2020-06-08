@@ -211,6 +211,7 @@ enum {
 
 struct LM {
     LMPtr ken;
+    LMStatePtr kenStart;
     FlatTriePtr trie;
     const w2l_dfa_node *dfa;
     int silToken;
@@ -315,7 +316,7 @@ struct State {
                 if (edge.token == TOKEN_LMWORD || edge.token == TOKEN_LMWORD_CTX) {
                     auto nextKenState = edge.token == TOKEN_LMWORD_CTX ? kenState : nullptr;
                     if (!nextKenState)
-                        nextKenState = lm.ken->start(0);
+                        nextKenState = lm.kenStart;
                     auto dictRoot = lm.trie->getRoot();
                     const auto n = dictRoot->nChildren;
                     for (int i = 0; i < n; ++i) {
@@ -548,7 +549,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     if (allSilence)
         return nullptr;
 
-    auto dfalm = DFALM::LM{decoderObj->lm, decoderObj->flatTrie, dfa, decoderObj->silIdx, decoderObj->decoderOpt.criterionType == CriterionType::ASG};
+    auto dfalm = DFALM::LM{decoderObj->lm, decoderObj->lm->start(0), decoderObj->flatTrie, dfa, decoderObj->silIdx, decoderObj->decoderOpt.criterionType == CriterionType::ASG};
     dfalm.commandScore = opts->command_score;
     dfalm.firstCommandLabel = decoderObj->wordList.size();
 
