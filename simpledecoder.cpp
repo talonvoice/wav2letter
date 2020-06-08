@@ -75,11 +75,11 @@ namespace KenFlatTrieLM {
         // Iterate over children of the state, calling fn with:
         // new State (or a Proxy), new token index and whether the new state has children
         template <typename Fn>
-        bool forChildren(int frame, std::vector<int> &indices, const LM &lm, Fn&& fn) const {
+        bool forChildren(int frame, std::unordered_set<int> &indices, const LM &lm, Fn&& fn) const {
             const auto n = lex->nChildren;
             for (int i = 0; i < n; ++i) {
                 auto nlex = lex->child(i);
-                if (std::binary_search(indices.begin(), indices.end(), nlex->idx)) {
+                if (indices.find(nlex->idx) != indices.end()) {
                     fn(Proxy{*this, nlex}, nlex->idx, nlex->nChildren > 0);
                 }
             }
@@ -339,12 +339,13 @@ auto BeamSearch<LM, LMStateType>::run(
     float candidatesBestScore = kNegativeInfinity;
 
     std::vector<int> indices(nTokens_);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::unordered_set<int> indexSet(indices.begin(), indices.end());
     for (int t = 0; t < frames; t++) {
         // std::cout << "\nframe: " << t << "\n";
         int frame = startFrame + t;
-        indices.resize(nTokens_);
-        std::iota(indices.begin(), indices.end(), 0);
         if (nTokens_ > opt_.beamSizeToken) {
+            std::iota(indices.begin(), indices.end(), 0);
             std::partial_sort(
                 indices.begin(),
                 indices.begin() + opt_.beamSizeToken,
@@ -352,7 +353,8 @@ auto BeamSearch<LM, LMStateType>::run(
                 [&](const int& left, const int& right) {
                     return emissions[frame * nTokens_ + left] > emissions[frame * nTokens_ + right];
                 });
-            indices.resize(opt_.beamSizeToken);
+            indexSet.clear();
+            indexSet.insert(indices.begin(), indices.end());
         }
         candidates.clear();
 
@@ -393,7 +395,7 @@ auto BeamSearch<LM, LMStateType>::run(
 
             const float prevMaxScore = prevLmState.maxWordScore();
             /* (1) Try children */
-            repeatPrevLex &= prevLmState.forChildren(t, indices, lm_, [&, prevIdx, prevMaxScore](auto lmState, int n, bool hasChildren) {
+            repeatPrevLex &= prevLmState.forChildren(t, indexSet, lm_, [&, prevIdx, prevMaxScore](auto lmState, int n, bool hasChildren) {
                 if (n == prevIdx && (opt_.criterionType != CriterionType::CTC || !prevHyp.getPrevBlank()))
                     repeatPrevLex = false;
                 float score = prevHyp.score + emissions[frame * nTokens_ + n];

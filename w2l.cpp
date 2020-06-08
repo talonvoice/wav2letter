@@ -291,13 +291,13 @@ struct State {
     // Iterate over children of the state, calling fn with:
     // new State, new token index and whether the new state has children
     template <typename Fn>
-    bool forChildren(int frame, std::vector<int> &indices, const LM &lm, Fn&& fn) const {
+    bool forChildren(int frame, std::unordered_set<int> &indices, const LM &lm, Fn&& fn) const {
         // If a dictionary word was started only consider its trie children.
         if (dictLex) {
             const auto n = dictLex->nChildren;
             for (int i = 0; i < n; ++i) {
                 auto nlex = dictLex->child(i);
-                if (std::binary_search(indices.begin(), indices.end(), nlex->idx)) {
+                if (indices.find(nlex->idx) != indices.end()) {
                     fn(State{grammarLex, nlex, kenState}, nlex->idx, nlex->nChildren > 0);
                 }
             }
@@ -323,14 +323,14 @@ struct State {
                     const auto n = dictRoot->nChildren;
                     for (int i = 0; i < n; ++i) {
                         auto nDictLex = dictRoot->child(i);
-                        if (std::binary_search(indices.begin(), indices.end(), nDictLex->idx)) {
+                        if (indices.find(nDictLex->idx) != indices.end()) {
                             fn(State{nlex, nDictLex, nextKenState}, nDictLex->idx, nDictLex->nChildren > 0);
                         }
                     }
                 } else if (edge.token == TOKEN_SKIP) {
                     // std::cout << "skip token, queueing up a new node with " << nlex->nEdges << " edges\n";
                     queue.push_back(nlex);
-                } else if (std::binary_search(indices.begin(), indices.end(), edge.token)) {
+                } else if (indices.find(edge.token) != indices.end()) {
                     fn(State{nlex, nullptr, nullptr, edge.token == lm.silToken}, edge.token, true);
                 }
             }
