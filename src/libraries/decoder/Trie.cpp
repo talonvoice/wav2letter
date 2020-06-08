@@ -99,8 +99,8 @@ void Trie::smear(SmearingMode smearMode) {
   }
 }
 
-FlatTrie toFlatTrie(const TrieNode *root)
-{
+FlatTrie toFlatTrie(const TrieNode *root) {
+    // TODO: (1) version flattrie files and (2) somehow hash their LM + tokens + lexicon?
     std::vector<int32_t> out;
     std::unordered_map<const TrieNode *, size_t> zeroOffsets;
 
@@ -128,7 +128,17 @@ FlatTrie toFlatTrie(const TrieNode *root)
         flat->maxScore = node->maxScore;
         flat->nChildren = node->children.size();
         flat->nLabel = node->labels.size();
+
+        std::vector<std::pair<int, std::shared_ptr<TrieNode>>> children(node->children.begin(), node->children.end());
+        std::sort(children.begin(), children.end(), [](auto i, auto j) {
+            return i.first < j.first;
+        });
+
         int iChild = 0;
+        for (const auto &pair : children) {
+            flat->data[iChild++] = zeroOffsets[pair.second.get()] - thisOffset;
+        }
+
         for (const auto &child : node->children)
             flat->data[iChild++] = zeroOffsets[child.second.get()] - thisOffset;
         for (int i = 0; i < node->labels.size(); ++i) {
