@@ -157,6 +157,10 @@ struct SimpleDecoderState {
   bool operator<(const SimpleDecoderState &other) const {
       return score < other.score;
   }
+
+  bool operator>(const SimpleDecoderState &other) const {
+      return score > other.score;
+  }
 };
 #pragma pack(pop)
 
