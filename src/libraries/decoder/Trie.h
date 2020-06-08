@@ -73,6 +73,35 @@ struct FlatTrieNode
     int32_t label(size_t i) const {
         return data[nChildren + i];
     }
+
+    const FlatTrieNode *find(size_t token) const {
+        // binary search children for token (requires ordered flattrie)
+        int L = 0;
+        int R = nChildren - 1;
+        while (L <= R) {
+            int mid = (L + R) / 2;
+            auto child = this->child(mid);
+            if (child->idx < token) {
+                L = mid + 1;
+            } else if (child->idx == token) {
+                return child;
+            } else {
+                R = mid - 1;
+            }
+        }
+        return nullptr;
+
+        // non-binary search
+        /*
+        for (ssize_t i = 0; i < nChildren; i++) {
+            auto child = this->child(i);
+            if (child->idx == token) {
+                return child;
+            }
+        }
+        return nullptr;
+        */
+    }
 };
 #pragma pack(pop)
 
