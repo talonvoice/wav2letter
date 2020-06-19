@@ -188,10 +188,10 @@ static void beamSearchNewCandidate(
             std::move(lmState.actualize()), parent, score, token, word, prevBlank);
     if (candidates.size() == opt.beamSize * 2) {
         // saves us a push + pop
-        std::pop_heap(candidates.begin(), candidates.end(), std::greater());
+        std::pop_heap(candidates.begin(), candidates.end(), std::greater<SimpleDecoderState<LMStateType2>>());
         candidates.pop_back();
     } else {
-        std::push_heap(candidates.begin(), candidates.end(), std::greater());
+        std::push_heap(candidates.begin(), candidates.end(), std::greater<SimpleDecoderState<LMStateType2>>());
     }
 }
 
