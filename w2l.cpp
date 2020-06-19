@@ -539,38 +539,26 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                         continue;
                     }
                 }
+                if (!s.empty() && s[0] == '_') {
+                    tokostr << " ";
+                    s = s.substr(1);
+                }
                 tokostr << s;
             }
             lastBlank = (tok == decoderObj->blankIdx);
             if (lastBlank && tokostr.tellp() > 0) {
                 // flush token on blank
-                std::string tokstr = tokostr.str();
-                if (tokstr[0] != '_') {
-                    ostr << tokstr;
-                } else {
-                    std::string tmp = ostr.str();
-                    if (!tmp.empty() && tmp.back() != ' ') {
-                        ostr << " ";
-                    }
-                    ostr << tokstr.substr(1);
-                }
+                ostr << tokostr.str();
                 tokostr = std::ostringstream();
             }
         }
         // flush last token
-        if (tokostr.tellp() > 0) {
-            std::string tokstr = tokostr.str();
-            if (tokstr[0] != '_') {
-                ostr << tokstr;
-            } else {
-                std::string tmp = ostr.str();
-                if (!tmp.empty() && tmp.back() != ' ') {
-                    ostr << " ";
-                }
-                ostr << tokstr.substr(1);
-            }
+        ostr << tokostr.str();
+        std::string str = ostr.str();
+        if (!str.empty() and str[0] == ' ') {
+            str = str.substr(1);
         }
-        return ostr.str();
+        return str;
     };
 
     auto viterbiToks =
