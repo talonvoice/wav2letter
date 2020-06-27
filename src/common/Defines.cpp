@@ -80,6 +80,7 @@ DEFINE_bool(lrcosine, false, "use cosine learning rate schedule");
 
 // LEARNING HYPER-PARAMETER OPTIONS
 DEFINE_int64(iter, std::numeric_limits<int64_t>::max(), "number of updates");
+DEFINE_bool(single_epoch, false, "run for only one epoch");
 DEFINE_bool(itersave, false, "save model at each iteration");
 DEFINE_double(lr, 1.0, "learning rate");
 DEFINE_double(momentum, 0.0, "momentum factor");

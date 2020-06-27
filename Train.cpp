@@ -692,6 +692,9 @@ int main(int argc, char** argv) {
         runValAndSaveModel(
             curEpoch, curBatch, netopt->getLr(), critopt->getLr());
       }
+      if (FLAGS_single_epoch) {
+        break;
+      }
     }
   };
 

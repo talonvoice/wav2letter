@@ -147,6 +147,7 @@ DECLARE_bool(lrcosine);
 /* ========== LEARNING HYPER-PARAMETER OPTIONS ========== */
 
 DECLARE_int64(iter);
+DECLARE_bool(single_epoch);
 DECLARE_bool(itersave);
 DECLARE_double(lr);
 DECLARE_double(momentum);
