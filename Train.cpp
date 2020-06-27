@@ -374,6 +374,7 @@ int main(int argc, char** argv) {
       W2lSerializer::save(
           filename, config, network, criterion, netoptim, critoptim);
 
+#if 0
       // save if better than ever for one valid
       for (const auto& v : validminerrs) {
         double verr = meters.valid[v.first].wrdEdit.value()[0];
@@ -386,6 +387,7 @@ int main(int argc, char** argv) {
               vfname, config, network, criterion, netoptim, critoptim);
         }
       }
+#endif
       // print brief stats on memory allocation (so far)
       auto* curMemMgr =
           fl::MemoryManagerInstaller::currentlyInstalledMemoryManager();
