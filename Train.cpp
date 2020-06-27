@@ -215,7 +215,7 @@ int main(int argc, char** argv) {
   std::shared_ptr<fl::FirstOrderOptimizer> critoptim;
 
   auto scalemode = getCriterionScaleMode(FLAGS_onorm, FLAGS_sqnorm);
-  if (runStatus == kTrainMode) {
+  if (runStatus == kTrainMode || runStatus == kForkMode) {
     auto archfile = pathsConcat(FLAGS_archdir, FLAGS_arch);
     LOG_MASTER(INFO) << "Loading architecture file from " << archfile;
     auto numFeatures = getSpeechFeatureSize();
@@ -241,10 +241,17 @@ int main(int argc, char** argv) {
     } else {
       LOG(FATAL) << "unimplemented criterion";
     }
-  } else if (runStatus == kForkMode) {
+  }
+  if (runStatus == kForkMode) {
     std::unordered_map<std::string, std::string> cfg; // unused
-    W2lSerializer::load(reloadPath, cfg, network, criterion);
-  } else { // kContinueMode
+    std::shared_ptr<fl::Module> tmpNetwork;
+    W2lSerializer::load(reloadPath, cfg, tmpNetwork, criterion);
+    auto params = tmpNetwork->params();
+    for (int i = 0; i < params.size() - 2; ++i) {
+      // do not write last two params which correspond to weight and bias of last linear layer
+      network->setParams(params[i], i);
+    }
+  } else if (runStatus == kContinueMode) {
     std::unordered_map<std::string, std::string> cfg; // unused
     W2lSerializer::load(
         reloadPath, cfg, network, criterion, netoptim, critoptim);
