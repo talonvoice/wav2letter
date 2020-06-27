@@ -156,6 +156,7 @@ DECLARE_bool(sqnorm);
 DECLARE_double(lrcrit);
 DECLARE_int64(warmup);
 DECLARE_int64(saug_start_update);
+DECLARE_double(speed_augment);
 DECLARE_int64(lr_decay);
 DECLARE_int64(lr_decay_step);
 DECLARE_double(maxgradnorm);

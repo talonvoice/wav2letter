@@ -42,4 +42,5 @@ target_link_libraries(
     streaming_inference_common
     streaming_inference_decoder
     streaming_inference_modules
+    samplerate
 )

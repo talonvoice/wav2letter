@@ -9,11 +9,18 @@
 #include <glog/logging.h>
 #include <functional>
 #include <numeric>
+#include <random>
+#include <samplerate.h>
 
 #include "common/Defines.h"
 #include "data/W2lListFilesDataset.h"
 
 namespace w2l {
+
+static std::random_device rand_dev;
+static std::mt19937 rand_gen(rand_dev());
+static std::uniform_real_distribution<float> speed_distribution(1.0 - FLAGS_speed_augment, 1.0 + FLAGS_speed_augment);
+static std::uniform_real_distribution<float> unit_distribution(0.0, 1.0);
 
 W2lListFilesDataset::W2lListFilesDataset(
     const std::string& filenames,
@@ -78,7 +85,25 @@ std::vector<W2lLoaderData> W2lListFilesDataset::getLoaderData(
     }
 
     data[id].sampleId = data_[i].getSampleId();
-    data[id].input = loadSound(data_[i].getAudioFile());
+    // data[id].input = loadSound(data_[i].getAudioFile());
+    std::vector<float> audio = loadSound(data_[i].getAudioFile());
+    if (FLAGS_speed_augment != 0 && unit_distribution(rand_gen) < 0.25) {
+        float ratio = speed_distribution(rand_gen);
+        std::vector<float> tmp(int(std::ceil(audio.size() * ratio)));
+        SRC_DATA data = {
+            &audio[0], &tmp[0],
+            int(audio.size()), int(tmp.size()),
+            0, 0, 0, ratio,
+        };
+        // TODO: benchmark, consider medium quality for speed?
+        int result = src_simple(&data, SRC_SINC_MEDIUM_QUALITY, 1);
+        if (result == 0) {
+            tmp.resize(data.output_frames_gen);
+            audio = std::move(tmp);
+        }
+    }
+    data[id].input = std::move(audio);
+
     data[id].targets[kTargetIdx] = wrd2Target(
         data_[i].getTranscript(),
         lexicon_,

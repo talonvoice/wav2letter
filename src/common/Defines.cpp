@@ -91,6 +91,10 @@ DEFINE_int64(
     saug_start_update,
     -1,
     "Use SpecAugment starting at the update number inputted. -1 means no SpecAugment");
+DEFINE_double(
+    speed_augment,
+    0,
+    "Resample audio this percent in either direction, e.g. 0.25 means random 0.75x-1.25x speed. 0 means no resample.");
 DEFINE_int64(
     lr_decay,
     std::numeric_limits<int64_t>::max(),

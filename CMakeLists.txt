@@ -188,6 +188,7 @@ target_link_libraries(
   data
   module
   runtime
+  samplerate
   )
 
 target_include_directories(
