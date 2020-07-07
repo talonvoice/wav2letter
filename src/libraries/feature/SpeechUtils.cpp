@@ -10,15 +10,18 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <chrono>
+#include <iostream>
 
-extern "C" {
 #if W2L_LIBRARIES_USE_MKL
 #include <mkl_cblas.h>
-#include <mkl_service.h>
+#elif __APPLE__
+#include <Accelerate/Accelerate.h>
 #else
-#include <cblas.h>
+#define FBGEMM_CBLAS_GEMM 1
+#include <fbgemm/FbgemmFP16.h>
+#include <omp.h>
 #endif
-}
 
 namespace w2l {
 
@@ -40,6 +43,7 @@ std::vector<float> frameSignal(
   return frames;
 }
 
+#ifdef FBGEMM_CBLAS_GEMM
 std::vector<float> cblasGemm(
     const std::vector<float>& matA,
     const std::vector<float>& matB,
@@ -54,13 +58,30 @@ std::vector<float> cblasGemm(
 
   std::vector<float> matC(m * n);
 
-#if W2L_LIBRARIES_USE_MKL
-  auto prevMaxThreads = mkl_get_max_threads();
-  mkl_set_num_threads_local(1);
-#else
-  // TODO: to be tested
-#endif
+  fbgemm::PackedGemmMatrixFP16 Bp(fbgemm::matrix_op_t::NoTranspose, k, n, 1.0, matB.data());
+#pragma omp parallel
+    {
+      int num_threads = omp_get_num_threads();
+      int tid = omp_get_thread_num();
+      cblas_gemm_compute(fbgemm::matrix_op_t::NoTranspose, m, matA.data(), Bp, 0.0, matC.data(), tid, num_threads);
+    }
 
+  return matC;
+};
+#else // FBGEMM_CBLAS_GEMM
+
+std::vector<float> cblasGemm(
+    const std::vector<float>& matA,
+    const std::vector<float>& matB,
+    int n,
+    int k) {
+  if (n <= 0 || k <= 0 || matA.empty() || (matA.size() % k != 0) ||
+      (matB.size() != n * k)) {
+    throw std::invalid_argument("cblasGemm: invalid arguments");
+  }
+  int m = matA.size() / k;
+
+  std::vector<float> matC(m * n);
   cblas_sgemm(
       CblasRowMajor,
       CblasNoTrans,
@@ -76,13 +97,9 @@ std::vector<float> cblasGemm(
       0.0, // beta
       matC.data(),
       n);
-
-#if W2L_LIBRARIES_USE_MKL
-  mkl_set_num_threads_local(prevMaxThreads);
-#else
-  // TODO: to be tested
-#endif
-
   return matC;
 };
+
+#endif // FBGEMM_CBLAS_GEMM
+
 } // namespace w2l
