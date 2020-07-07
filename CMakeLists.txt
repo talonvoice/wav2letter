@@ -149,8 +149,8 @@ add_library(w2l SHARED
     ${CRITERION_SRC}
     ${DATA_SRC}
 
-    w2l.cpp
-    w2l_forward.cpp
+    w2l/w2l.cpp
+    w2l/w2l_forward.cpp
 )
 if (USE_MKL)
     target_compile_definitions(w2l PUBLIC -DUSE_MKL -DW2L_LIBRARIES_USE_MKL)
@@ -201,7 +201,7 @@ add_library(w2lstream SHARED
     ${FEATURE_SRC}
     ${INFERENCE_SRC}
     ${DECODER_SRC}
-    w2lstream.cpp
+    w2l/w2lstream.cpp
 )
 target_link_libraries(w2lstream
     "-L${PROJECT_SOURCE_DIR}/../opt/lib"
@@ -231,7 +231,7 @@ target_include_directories(
   ${KENLM_INCLUDE_DIRS}
 )
 
-add_executable(wavstream wavstream.c)
+add_executable(wavstream w2l/wavstream.c)
 target_link_libraries(wavstream w2lstream)
 
 # add_executable(simple_example
@@ -242,4 +242,4 @@ target_link_libraries(wavstream w2lstream)
 # target_link_libraries(simple_example w2lstream)
 
 install(TARGETS w2l   w2lstream DESTINATION lib)
-install(FILES   w2l.h w2lstream.h DESTINATION include)
+install(FILES   w2l/w2l.h w2l/w2lstream.h DESTINATION include)
