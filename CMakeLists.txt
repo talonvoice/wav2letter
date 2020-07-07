@@ -127,6 +127,7 @@ set(CRITERION_SRC
     src/criterion/backend/cpu/ForceAlignmentCriterion.cpp
     src/criterion/backend/cpu/FullConnectionCriterion.cpp
 
+    src/libraries/criterion/cpu/ConnectionistTemporalClassificationCriterion.cpp
     src/libraries/criterion/cpu/CriterionUtils.cpp
     src/libraries/criterion/cpu/FullConnectionCriterion.cpp
     src/libraries/criterion/cpu/ForceAlignmentCriterion.cpp
