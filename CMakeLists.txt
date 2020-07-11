@@ -234,6 +234,9 @@ target_include_directories(
 add_executable(wavstream w2l/wavstream.c)
 target_link_libraries(wavstream w2lstream)
 
+add_executable(w2l_cli w2l/cli.cpp)
+target_link_libraries(w2l_cli w2l)
+
 # add_executable(simple_example
 #     inference/inference/examples/SimpleStreamingASRExample.cpp
 #     inference/inference/examples/AudioToWords.cpp

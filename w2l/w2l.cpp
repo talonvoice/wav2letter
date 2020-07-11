@@ -425,19 +425,31 @@ typedef struct w2l_decoder w2l_decoder;
 typedef struct w2l_emission w2l_emission;
 typedef struct w2l_decoderesult w2l_decoderesult;
 
-w2l_engine *w2l_engine_new(const char *acoustic_model_path, const char *tokens_path) {
+w2l_engine *w2l_engine_new() {
     // TODO: what other engine config do I need?
-    auto engine = new Engine(acoustic_model_path, tokens_path);
+    auto engine = new Engine();
     return reinterpret_cast<w2l_engine *>(engine);
+}
+
+bool w2l_engine_load_w2l(w2l_engine *engine, const char *acoustic_model_path, const char *tokens_path) {
+    return reinterpret_cast<Engine *>(engine)->loadW2lModel(acoustic_model_path, tokens_path);
+}
+
+bool w2l_engine_load_b2l(w2l_engine *engine, const char *path) {
+    return reinterpret_cast<Engine *>(engine)->loadB2lModel(path);
+}
+
+bool w2l_engine_export_w2l(w2l_engine *engine, const char *path) {
+    return reinterpret_cast<Engine *>(engine)->exportW2lModel(path);
+}
+
+bool w2l_engine_export_b2l(w2l_engine *engine, const char *path) {
+    return reinterpret_cast<Engine *>(engine)->exportB2lModel(path);
 }
 
 w2l_emission *w2l_engine_process(w2l_engine *engine, float *samples, size_t sample_count) {
     auto emission = reinterpret_cast<Engine *>(engine)->process(samples, sample_count);
     return reinterpret_cast<w2l_emission *>(emission);
-}
-
-bool w2l_engine_export(w2l_engine *engine, const char *path) {
-    return reinterpret_cast<Engine *>(engine)->exportModel(path);
 }
 
 void w2l_engine_free(w2l_engine *engine) {

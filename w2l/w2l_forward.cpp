@@ -26,8 +26,58 @@
 
 #include "w2l.h"
 #include "w2l_p.h"
+#include "b2l.h"
 
 using namespace w2l;
+
+// helper functions
+namespace {
+
+void trim(std::string &s, std::string needle) {
+    s.erase(s.find_last_not_of(needle)+1);
+    s.erase(s.begin(), s.begin() + s.find_first_not_of(needle));
+}
+
+std::pair<std::string, std::string> splitOn(std::string s, std::string on) {
+    auto split = s.find(on);
+    if (split == std::string::npos) {
+        return {s, ""};
+    }
+    auto first = s.substr(0, split);
+    auto second = s.substr(split + on.size());
+    trim(first, ", ");
+    trim(second, ", ");
+    return {first, second};
+}
+
+std::vector<std::string> splitAll(std::string s, std::string on) {
+    std::vector<std::string> out;
+    if (on.empty()) {
+        out.push_back(s);
+        return out;
+    }
+    size_t pos = 0;
+    while (1) {
+        auto split = s.find(on, pos);
+        auto first = s.substr(pos, split - pos);
+        trim(first, ", ");
+        out.push_back(first);
+        if (split == std::string::npos) {
+            break;
+        }
+        pos = split + on.size();
+    }
+    return out;
+}
+
+std::string findParens(std::string s, std::string left="(", std::string right=")") {
+    auto start = s.find(left);
+    auto end = s.find(right, start);
+    auto sp = s.substr(start + 1, end - start - 1);
+    return sp;
+}
+
+}
 
 Emission::Emission(EngineBase *engine, af::array emission, af::array inputs) {
     this->engine = engine;
@@ -47,22 +97,8 @@ char *Emission::text() {
     return strdup("");
 }
 
-Engine::Engine(const char *acousticModelPath, const char *tokensPath) {
-    // TODO: set criterionType "correctly"
-    W2lSerializer::load(acousticModelPath, config, network, criterion);
-    auto flags = config.find(kGflags);
-    // loading flags globally like this is gross, only way to work around it will be parameterizing everything about wav2letter better
-    gflags::ReadFlagsFromString(flags->second, gflags::GetArgv0(), true);
-
-    criterionType = FLAGS_criterion;
-    network->eval();
-    criterion->eval();
-
-    tokenDict = Dictionary(tokensPath);
-    if (criterionType == kCtcCriterion) {
-        tokenDict.addEntry(kBlankToken);
-    }
-    numClasses = tokenDict.indexSize();
+Engine::Engine() {
+    loaded = false;
 }
 
 Emission *Engine::process(float *samples, size_t sample_count) {
@@ -79,7 +115,176 @@ af::array Engine::process(const af::array &features) {
     return network->forward({fl::input(features)}).front().array();
 }
 
-bool Engine::exportModel(const char *path) {
+bool Engine::loadW2lModel(std::string acousticModelPath, std::string tokensPath) {
+    // TODO: put feature type and params in model config section
+    // FLAGS_mfsc = true;
+    // gflags::FlagSaver flagsave; // TODO: don't clobber global flags (wordpiece seems to use global flags for now)
+    W2lSerializer::load(acousticModelPath, config, network, criterion);
+    auto flags = config.find(kGflags);
+    gflags::ReadFlagsFromString(flags->second, gflags::GetArgv0(), true);
+
+    criterionType = FLAGS_criterion;
+    network->eval();
+    criterion->eval();
+
+    tokenDict = Dictionary(tokensPath);
+    if (criterionType == kCtcCriterion) {
+        tokenDict.addEntry(kBlankToken);
+    }
+    numClasses = tokenDict.indexSize();
+    loaded = true;
+    return true;
+}
+
+bool Engine::loadB2lModel(std::string path) {
+    auto file = b2l::File::read_file(path);
+    // create a blank model from the arch
+    auto config = file.section("config").keyval();
+    auto arch = w2l::split("\n", file.section("arch").utf8());
+    auto tokens = w2l::split("\n", file.section("tokens").utf8());
+    auto network = createW2lSeqModule(arch, getSpeechFeatureSize(), tokens.size());
+    // load the parameters
+    auto layers = file.section("layers").layers();
+    auto seq = dynamic_cast<fl::Sequential *>(network.get());
+    auto modules = seq->modules();
+    for (ssize_t i = 0; i < layers.size(); i++) {
+        auto &layer = layers[i];
+        auto module = modules[i].get();
+        std::cout << "loading layer: " << layer.arch << "\n";
+        std::cout << "matching module: " << layerArch(module) << "\n";
+        std::cout << "layer params=" << layer.params.size() << "\n";
+        std::cout << "module params=" << module->params().size() << "\n";
+
+        for (ssize_t j = 0; j < layer.params.size(); i++) {
+            auto &array = layer.params[j];
+            switch (array.type()) {
+                case b2l::Array::Type::FP32: {
+                    auto val = array.array<float>();
+                    fl::Variable v(af::array(val.size(), val.data()), false);
+                    module->setParams(v, j);
+                    break;
+                }
+                default:
+                    throw std::runtime_error("loading unsupported b2l parameter type");
+            }
+        }
+    }
+    // create blank criterion
+    // TODO: stuff a serialized criterion in the b2l file?
+    criterionType = config["criterion"];
+    auto scalemode = CriterionScaleMode::NONE;
+    if (criterionType == kCtcCriterion) {
+        criterion = std::make_shared<CTCLoss>(scalemode);
+    } else if (criterionType == kAsgCriterion) {
+        criterion = std::make_shared<ASGLoss>(tokens.size(), scalemode, 0.0);
+        // load transitions
+        auto transitions = file.section("transitions").array<float>();
+        fl::Variable v(af::array(transitions.size(), transitions.data()), false);
+        criterion->setParams(v, 0);
+    } else {
+        throw std::runtime_error("unsupported criterion");
+    }
+    /*
+    } else if (criterionType == kSeq2SeqCriterion) {
+      criterion = std::make_shared<Seq2SeqCriterion>(buildSeq2Seq(numClasses, tokenDict.getIndex(kEosToken)));
+    } else if (criterionType == kTransformerCriterion) {
+      criterion =
+          std::make_shared<TransformerCriterion>(buildTransformerCriterion(
+              numClasses,
+              FLAGS_am_decoder_tr_layers,
+              FLAGS_am_decoder_tr_dropout,
+              FLAGS_am_decoder_tr_layerdrop,
+              tokenDict.getIndex(kEosToken)));
+    */
+
+    network->eval();
+    criterion->eval();
+
+    for (auto &token : tokens) {
+        tokenDict.addEntry(token);
+    }
+    if (criterionType == kCtcCriterion && tokens.back() != kBlankToken) {
+        tokenDict.addEntry(kBlankToken);
+    }
+    numClasses = tokenDict.indexSize();
+    loaded = true;
+    return true;
+}
+
+bool Engine::exportW2lModel(std::string path) {
+    return false;
+}
+
+// TODO: catch C++ exceptions here, or in the C API wrapper
+bool Engine::exportB2lModel(std::string path) {
+    std::ostringstream arch;
+    auto seq = dynamic_cast<fl::Sequential *>(network.get());
+    auto modules = seq->modules();
+    std::vector<b2l::Layer> layers;
+    layers.reserve(modules.size());
+
+    bool badLayer = false;
+    for (auto &module : modules) {
+        std::string layerString = layerArch(module.get());
+        if (layerString == "") {
+            badLayer = true;
+            continue;
+        }
+        arch << layerString << "\n";
+
+        auto flParams = module->params();
+        std::vector<b2l::Array> params;
+        params.reserve(flParams.size());
+        for (auto &var : flParams) {
+            params.emplace_back(b2l::Array(afToVector<float>(var.array())));
+        }
+        layers.emplace_back(b2l::Layer{layerString, params});
+    }
+    if (badLayer) {
+        std::cerr << "[w2lapi] aborting export due to layer errors" << std::endl;
+        return false;
+    }
+
+    b2l::File file;
+
+    // remove all path-related flags
+    std::unordered_set<std::string> skip_flags{
+        "train", "valid", "test", "archdir", "datadir", "rundir", "emission_dir", "log_dir",
+        "tokens", "lexicon", "lm_vocab", "lm", "sclite", "rndv_filepath",
+    };
+    std::unordered_map<std::string, std::string> flags;
+    std::string key, val;
+    for (auto line : splitAll(config.find(kGflags)->second, "\n")) {
+        std::tie(key, val) = splitOn(line, "=");
+        trim(key, "-");
+        if (skip_flags.find(key) == skip_flags.end()) {
+            flags[key] = val;
+        }
+    }
+    file.add_section("flags").keyval(flags);
+
+    // TODO: feature params? mfsc / feature width / channels / samplerate / etc
+    file.add_section("config").keyval({
+        {"criterion", criterionType},
+    });
+    file.add_section("arch").utf8(arch.str());
+    file.add_section("tokens").utf8(exportTokens());
+    file.add_section("layers").layers(layers);
+    // TODO: spm.bin!
+
+    if (criterionType == kAsgCriterion) {
+        auto params = criterion->param(0);
+        auto array = afToVector<float>(params.array());
+        file.add_section("transitions").array(array);
+    }
+
+    auto writer = b2l::Writer::open_file(path);
+    file.write_to(writer);
+    return true;
+}
+
+/*
+bool Engine::exportW2lModel(const char *path) {
     std::ofstream outfile;
     outfile.open(path, std::ios::out | std::ios::binary);
     if (!outfile.is_open()) {
@@ -98,6 +303,7 @@ bool Engine::exportModel(const char *path) {
     }
     return true;
 }
+*/
 
 std::vector<float> Engine::transitions() const {
     if (criterionType == kAsgCriterion) {
@@ -110,87 +316,56 @@ af::array Engine::viterbiPath(const af::array &data) const {
     return criterion->viterbiPath(data);
 }
 
-void trim(std::string &s, std::string needle) {
-    s.erase(s.find_last_not_of(needle)+1);
-    s.erase(s.begin(), s.begin() + s.find_first_not_of(needle));
-}
-
-std::tuple<std::string, std::string> Engine::splitOn(std::string s, std::string on) {
-    auto split = s.find(on);
-    auto first = s.substr(0, split);
-    auto second = s.substr(split + on.size());
-    trim(first, ", ");
-    trim(second, ", ");
-    return {first, second};
-}
-
-std::string Engine::findParens(std::string s) {
-    auto start = s.find('(');
-    auto end = s.find(')', start);
-    auto sp = s.substr(start + 1, end - start - 1);
-    return sp;
-}
-
-void Engine::exportParams(std::ofstream& f, fl::Variable params) {
-    auto array = afToVector<float>(params.array());
-    for (float& p : array) {
-        f << std::hex << (uint32_t&)p;
-        if (&p != &array.back()) {
-            f << " ";
-        }
-    }
-    f << std::dec;
-}
-
-void Engine::exportTokens(std::ofstream& f) {
-    std::cout << "[w2lapi] exporting: tokens" << std::endl;
-    f << "TOK ";
+// export functions
+std::string Engine::exportTokens() {
+    std::ostringstream ostr;
     for (int i = 0; i < tokenDict.indexSize(); i++) {
-        if (i > 0) f << ";";
-        std::string entry = tokenDict.getEntry(i);
-        for (int i = 0; i < entry.size(); i++) {
-            if (i > 0) f << ",";
-            f << std::hex << (unsigned int)entry[i];
-        }
+        ostr << tokenDict.getEntry(i);
+        ostr << "\n";
     }
-    f << std::dec;
-    f << "\n";
+    return ostr.str();
 }
 
-void Engine::exportTransitions(std::ofstream& f) {
-    std::cout << "[w2lapi] exporting: transitions" << std::endl;
-    f << "ASG ";
-    exportParams(f, criterion->param(0));
-    f << "\n";
-}
-
-bool Engine::exportLayer(std::ofstream& f, fl::Module *module) {
+// NOTE: The order and structure of these layer exporters should match W2lModule.cpp
+std::string Engine::layerArch(fl::Module *module) {
+    std::ostringstream ostr;
     auto pretty = module->prettyString();
-    auto type = pretty.substr(0, pretty.find(' '));
-    std::cout << "[w2lapi] exporting: " << pretty << std::endl;
-    if (type == "WeightNorm") {
-        auto wn = dynamic_cast<fl::WeightNorm *>(module);
-        auto lastParam = pretty.rfind(",") + 2;
-        auto dim = pretty.substr(lastParam, pretty.size() - lastParam - 1);
-        f << "WN " << dim << " ";
-        exportLayer(f, wn->module().get());
-    } else if (type == "View") {
-        auto ratio = findParens(pretty);
-        f << "V " << findParens(pretty) << "\n";
-    } else if (type == "Dropout") {
-        f << "DO " << findParens(pretty) << "\n";
-    } else if (type == "Reorder") {
+    auto type = pretty.substr(0, pretty.find(" ("));
+    std::cerr << "[w2lapi] exporting: " << pretty << std::endl;
+
+    // TYPE: TRANSFORMATIONS
+    if (type == "Reorder") {
         auto dims = findParens(pretty);
         std::replace(dims.begin(), dims.end(), ',', ' ');
-        f << "RO " << dims << "\n";
-    } else if (type == "GatedLinearUnit") {
-        f << "GLU " << findParens(pretty) << "\n";
+        ostr << "RO " << dims;
+    } else if (type == "View") {
+        auto ratio = findParens(pretty);
+        ostr << "V " << findParens(pretty);
+    } else if (type == "Padding") {
+        auto params = findParens(pretty);
+        std::string value;
+        std::tie(value, params) = splitOn(params, ", ");
+
+        // Padding (0, { (10, 0), })
+        std::string l, r;
+        ostr << "PD " << value;
+        for (auto &seg : splitAll(params, "),")) {
+            trim(seg, "{()} ");
+            std::tie(l, r) = splitOn(seg, ", ");
+            ostr << l << " " << r;
+        }
+
+    // TYPE: TRANSFORMERS (TODO)
+    // } else if (type == "Transformer") {
+    // } else if (type == "PositionEmbedding") {
+
+    // TYPE: CONVOLUTIONS
     } else if (type == "Conv2D") {
         // Conv2D (234->514, 23x1, 1,1, 0,0, 1, 1) (with bias)
         auto parens = findParens(pretty);
         bool bias = pretty.find("with bias") >= 0;
         std::string inputs, outputs, szX, szY, padX, padY, strideX, strideY, dilateX, dilateY;
-        // TODO: I could get some of these from the params' dims instead of string parsing...
+        // TODO: I could get some of these from the params' dims instead of string parsing
 
         auto comma1 = parens.find(',') + 1;
         std::tie(inputs, outputs) = splitOn(parens.substr(0, comma1), "->");
@@ -210,31 +385,110 @@ bool Engine::exportLayer(std::ofstream& f, fl::Module *module) {
         // fl::Conv1D? C  [inputChannels] [outputChannels] [xFilterSz] [xStride] [xPadding <OPTIONAL>] [xDilation <OPTIONAL>]
         // fl::Conv2D  C2 [inputChannels] [outputChannels] [xFilterSz] [yFilterSz] [xStride] [yStride] [xPadding <OPTIONAL>] [yPadding <OPTIONAL>] [xDilation <OPTIONAL>] [yDilation <OPTIONAL>]
         if (szY == "1") {
-            f << "C "  << inputs << " " << outputs << " " << szX << " " << strideX << " " << padX << " " << dilateX << " | ";
+            ostr << "C "  << inputs << " " << outputs << " " << szX << " " << strideX << " " << padX << " " << dilateX;
         } else {
-            f << "C2 " << inputs  << " " << outputs
+            ostr << "C2 " << inputs  << " " << outputs
                 << " " << szX     << " " << szY
                 << " " << strideX << " " << strideY
                 << " " << padX    << " " << padY
-                << " " << dilateX << " " << dilateY << " | ";
+                << " " << dilateX << " " << dilateY;
         }
-        exportParams(f, module->param(0));
-        if (bias) {
-            f << " | ";
-            exportParams(f, module->param(1));
+    // Time-Depth Separable Block (9, 60, 19) [1140 -> 1140 -> 1140]
+    } else if (type == "Time-Depth Separable Block") {
+        auto tds = static_cast<w2l::TDSBlock *>(module);
+        auto tdsmods = tds->modules();
+        auto seq1 = static_cast<fl::Sequential *>(tdsmods[0].get());
+
+        // find dropout
+        auto dropstr = seq1->modules().back()->prettyString();
+        auto dropout = findParens(dropstr);
+
+        // find right-pad
+        auto padstr = seq1->modules()[0]->prettyString();
+        auto params = findParens(padstr);
+        auto rightPad = splitAll(params, ",")[2];
+
+        // find lNormIncludeTime
+        auto layernormstr = tdsmods[1]->prettyString();
+        layernormstr = findParens(layernormstr, "{", "}");
+        trim(layernormstr);
+        bool lNormIncludeTime = (layernormstr == "0 1 2");
+
+        // extract other params
+        auto convW = tds->param(0);
+        int kernelSize = convW.dims(0);
+        int channels = convW.dims(2);
+        auto linW = tds->param(4);
+        int width = linW.dims(0) / channels;
+        int linOuter = linW.dims(1);
+        int linInner = linW.dims(0);
+        if (linInner == linOuter) {
+            linInner = 0;
         }
-        f << "\n";
+        ostr << "TDS " << channels << " " << kernelSize << " " << width;
+        ostr << " " << dropout << " " << linInner << " " << rightPad;
+        ostr << " " << (lNormIncludeTime ? "1" : "0");
+    // } else if (type == "AsymmetricConv1D") {
+
+    // TYPE: LINEAR
     } else if (type == "Linear") {
         std::string inputs, outputs;
         std::tie(inputs, outputs) = splitOn(findParens(pretty), "->");
-        f << "L " << inputs << " " << outputs << " | ";
-        exportParams(f, module->param(0));
-        f << "\n";
-    } else {
-        // TODO: also write error to the file?
-        std::cout << "[w2lapi] error, unknown layer type: " << type << std::endl;
-        return false;
-    }
-    return true;
-}
+        ostr << "L " << inputs << " " << outputs;
 
+    // TYPE: EMBEDDING (TODO)
+
+    // TYPE: NORMALIZATIONS
+    // } else if (type == "BatchNorm") {
+    } else if (type == "LayerNorm") {
+        ostr << "LN " << findParens(pretty, "{", "}");
+    } else if (type == "WeightNorm") {
+        auto wn = dynamic_cast<fl::WeightNorm *>(module);
+        auto lastParam = pretty.rfind(",") + 2;
+        auto dim = pretty.substr(lastParam, pretty.size() - lastParam - 1);
+        ostr << "WN " << dim << " ";
+        ostr << layerArch(wn->module().get());
+    } else if (type == "Dropout") {
+        ostr << "DO " << findParens(pretty);
+
+    // TYPE: POOLING (TODO)
+
+    // TYPE: ACTIVATIONS
+    } else if (type == "ELU") {
+        ostr << "ELU";
+    } else if (type == "ReLU") {
+        ostr << "R";
+    } else if (type == "ReLU6") {
+        ostr << "R6";
+    // } else if (type == "PReLU") {
+    } else if (type == "Log") {
+        ostr << "LG";
+    } else if (type == "HardTanh") {
+        ostr << "HT";
+    } else if (type == "Tanh") {
+        ostr << "T";
+    } else if (type == "GatedLinearUnit") {
+        ostr << "GLU " << findParens(pretty);
+    // } else if (type == "LogSoftmax") {
+    // } else if (type == "Swish") {
+
+    // TYPE: RNNs (TODO)
+    // TYPE: Residual block (TODO)
+
+    // TYPE: Data Augmentation
+    } else if (type == "SpecAugment") {
+        // SpecAugment ( W: 60, F: 18, mF: 2, T: 100, p: 0.05, mT: 2 )
+        auto cs = splitAll(pretty, ", ");
+        for (auto &s : cs) {
+            s = splitOn(s, ": ").second;
+            trim(s, " )");
+        }
+        ostr << "SAUG " << cs[0] << cs[1] << cs[2] << cs[3] << cs[4] << cs[5];
+
+    // TYPE: Unknown
+    } else {
+        std::cerr << "[w2lapi] error, unknown layer type: " << type << std::endl;
+        return "";
+    }
+    return ostr.str();
+}

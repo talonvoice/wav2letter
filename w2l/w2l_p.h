@@ -35,23 +35,23 @@ public:
 
 class Engine : public EngineBase {
 public:
-    Engine(const char *acousticModelPath, const char *tokensPath);
+    Engine();
     ~Engine() {}
 
     Emission *process(float *samples, size_t sample_count);
     af::array process(const af::array &features);
 
-    bool exportModel(const char *path);
+    bool loadW2lModel(std::string modelPath, std::string tokensPath);
+    bool loadB2lModel(std::string path);
+    bool exportW2lModel(std::string path);
+    bool exportB2lModel(std::string path);
 
     std::vector<float> transitions() const;
-
     af::array viterbiPath(const af::array &data) const;
 
 private:
-    std::tuple<std::string, std::string> splitOn(std::string s, std::string on);
-    std::string findParens(std::string s);
-    void exportParams(std::ofstream& f, fl::Variable params);
-    bool exportLayer(std::ofstream& f, fl::Module *module);
-    void exportTransitions(std::ofstream& f);
-    void exportTokens(std::ofstream& f);
+    std::string exportTokens();
+    std::string layerArch(fl::Module *module);
+private:
+    bool loaded;
 };
