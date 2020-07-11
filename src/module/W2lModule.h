@@ -14,6 +14,11 @@
 namespace w2l {
 
 std::shared_ptr<fl::Sequential> createW2lSeqModule(
+    const std::vector<std::string>& layers,
+    int64_t nFeatures,
+    int64_t nClasses);
+
+std::shared_ptr<fl::Sequential> createW2lSeqModule(
     const std::string& archfile,
     int64_t nFeatures,
     int64_t nClasses);

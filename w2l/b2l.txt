@@ -1,0 +1,57 @@
+# binary wav2letter model file format
+# all numbers are stored as little endian
+# floats are stored as IEEE754
+
+# TODO: minimize manual header fields (tags, description), put those in sections?
+# TODO: more quantization support - scale / offset?
+
+short string:
+    u8 length
+    utf8 value = <length> utf8 bytes
+
+long string:
+    u64 length
+    utf8 value = <length> utf8 bytes
+
+file start:
+    magic = "BW2L"
+    u8 version = 1
+    short string name
+    u64 section_count = number of sections
+    for (1 ... <section_count>)
+        short string name = name of section (see "common sections")
+        short string type = type of section (see "section types")
+        long string desc  = section description
+        u64 data_length
+        bytes data = <data_length> bytes
+
+common sections:
+    name="arch"        type="utf8"   - wav2letter arch file
+    name="tokens"      type="utf8"   - wav2letter tokens file
+    name="flags"       type="keyval" - wav2letter flagsfile
+    name="config"      type="keyval" - model config e.g. {name: "streaming convnets",
+                                                          description: "example model",
+                                                          quantization: "",             # ("", "dynamic", "fp16", "i8", "8x16")
+                                                          criterion: "ctc",             # ("", "ctc", "asg", "seq2seq", "transformer")
+                                                          feature: "mfsc"}
+    name="layers"      type="layers" - model layers
+    name="spm"         type="data"   - sentencepiece model data
+    name="transitions" type="array"  - ASG transition matrix
+
+section types:
+    "utf8"   - section data is interpreted as utf8 text
+    "keyval" - section is filled with {short string key, long string val}
+    "data"   - section is byte data
+    "array":
+        short string type ("fp64", "fp32", "fp16", "i64", "i32", "i16", "i8")
+        u64 array_len
+        data[] = dense array of <type> values, length <array_len>
+    "layers":
+        u64 layer_count = number of layers
+        for (1 ... <layer_count>)
+            long_string arch # line defining this layer from wav2letter architecture file
+            float scale
+            i64 offset
+            u64 param_count
+            for (1 ... <param_count>)
+                array

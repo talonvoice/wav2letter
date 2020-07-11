@@ -34,11 +34,10 @@ std::shared_ptr<Module> parseLines(
 namespace w2l {
 
 std::shared_ptr<Sequential> createW2lSeqModule(
-    const std::string& archfile,
+    const std::vector<std::string>& layers,
     int64_t nFeatures,
     int64_t nClasses) {
   auto net = std::make_shared<Sequential>();
-  auto layers = getFileContent(archfile);
   int numLinesParsed = 0;
 
   // preprocess
@@ -61,6 +60,14 @@ std::shared_ptr<Sequential> createW2lSeqModule(
   }
 
   return net;
+}
+
+std::shared_ptr<Sequential> createW2lSeqModule(
+    const std::string& archfile,
+    int64_t nFeatures,
+    int64_t nClasses) {
+  auto layers = getFileContent(archfile);
+  return createW2lSeqModule(layers, nFeatures, nClasses);
 }
 
 } // namespace w2l
