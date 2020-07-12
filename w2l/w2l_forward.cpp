@@ -233,6 +233,10 @@ bool Engine::exportB2lModel(std::string path) {
         arch << layerString << "\n";
 
         auto flParams = module->params();
+        if (layerString.rfind("WN ", 0) == 0) {
+            auto wn = dynamic_cast<fl::WeightNorm *>(module.get());
+            flParams = wn->module()->params();
+        }
         std::vector<b2l::Array> params;
         params.reserve(flParams.size());
         for (auto &var : flParams) {
