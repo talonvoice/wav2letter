@@ -356,7 +356,7 @@ std::string Engine::layerArch(fl::Module *module) {
         for (auto &seg : splitAll(params, "),")) {
             trim(seg, "{()} ");
             std::tie(l, r) = splitOn(seg, ", ");
-            ostr << l << " " << r;
+            ostr << " " << l << " " << r;
         }
 
     // TYPE: TRANSFORMERS (TODO)
@@ -487,7 +487,7 @@ std::string Engine::layerArch(fl::Module *module) {
             s = splitOn(s, ": ").second;
             trim(s, " )");
         }
-        ostr << "SAUG " << cs[0] << cs[1] << cs[2] << cs[3] << cs[4] << cs[5];
+        ostr << "SAUG " << cs[0] << " " << cs[1] << " " << cs[2] << " " << cs[3] << " " << cs[4] << " " << cs[5];
 
     // TYPE: Unknown
     } else {
