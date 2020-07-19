@@ -33,7 +33,7 @@ using namespace w2l;
 // helper functions
 namespace {
 
-void trim(std::string &s, std::string needle) {
+void trim(std::string &s, std::string needle=" ") {
     s.erase(s.find_last_not_of(needle)+1);
     s.erase(s.begin(), s.begin() + s.find_first_not_of(needle));
 }
@@ -74,6 +74,7 @@ std::string findParens(std::string s, std::string left="(", std::string right=")
     auto start = s.find(left);
     auto end = s.find(right, start);
     auto sp = s.substr(start + 1, end - start - 1);
+    trim(sp);
     return sp;
 }
 
