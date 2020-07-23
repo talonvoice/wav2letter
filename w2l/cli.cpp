@@ -1,3 +1,4 @@
+#include <cstring>
 #include <iostream>
 #include "w2l.h"
 
