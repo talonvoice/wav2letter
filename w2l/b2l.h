@@ -478,7 +478,7 @@ public:
         return _writer;
     }
 
-    static Section read_from(Reader &reader) {
+    static Section read_from(Reader &reader, bool read_all=false) {
         std::string name = reader.short_string();
         std::string type = reader.short_string();
         std::string desc = reader.long_string();
@@ -488,22 +488,28 @@ public:
         out.name = std::move(name);
         out.type = std::move(type);
         out.desc = std::move(desc);
+
         size_t pos = reader.tell();
-        out.set_reader(reader, pos, size);
+        if (read_all) {
+            auto data = reader.read_bytes(size);
+            out.set_reader(Reader::open_memory(data), 0, size);
+        } else {
+            out.set_reader(reader, pos, size);
+        }
         reader.seek(pos + size);
         return out;
     }
 
-    void write_to(Writer &writer) const {
+    void write_to(Writer &writer) {
         if (!stream || type == "") {
             throw std::runtime_error("cannot write empty section");
         }
-        auto str = stream->str();
+        auto data = this->as_bytes();
         writer.short_string(name);
         writer.short_string(type);
         writer.long_string(desc);
-        writer.write64(str.size());
-        writer.write_bytes((uint8_t *)str.data(), str.size());
+        writer.write64(data.size());
+        writer.write_bytes(data);
     }
 
     std::vector<uint8_t> as_bytes() {
@@ -676,7 +682,7 @@ public:
         return ostr.str();
     }
 
-    static File read_from(Reader &reader) {
+    static File read_from(Reader &reader, bool read_all=false) {
         File out;
         auto data = reader.read_bytes(4);
         out.magic = std::string(data.begin(), data.end());
@@ -687,23 +693,23 @@ public:
         out.name = reader.short_string();
         out.sections.resize(reader.read64());
         for (ssize_t i = 0; i < out.sections.size(); i++) {
-            auto section = out.sections[i] = Section::read_from(reader);
+            auto section = out.sections[i] = Section::read_from(reader, read_all);
             out.section_lookup[section.name] = i;
         }
         return out;
     }
 
-    static File read_file(std::string path) {
+    static File open_file(std::string path, bool read_all=false) {
         auto reader = Reader::open_file(path);
-        return File::read_from(reader);
+        return File::read_from(reader, read_all);
     }
 
-    void write_to(Writer &writer) const {
+    void write_to(Writer &writer) {
         writer.write_bytes((uint8_t *)"BW2L", 4); // magic
         writer.write8(1);                         // version
         writer.short_string(name);
         writer.write64(sections.size());
-        for (const auto &section : sections) {
+        for (auto &section : sections) {
             section.write_to(writer);
         }
     }
