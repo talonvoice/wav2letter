@@ -697,9 +697,9 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     return strdup(result.c_str());
 }
 
-bool w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path)
-{
-    auto tokenDict = Dictionary(tokens_path);
+bool w2l_make_flattrie(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path) {
+    auto engineObj = reinterpret_cast<Engine *>(engine);
+    auto tokenDict = engineObj->tokenDict;
     auto silIdx = getSilIdx(tokenDict);
 
     auto lexicon = loadWords(lexicon_path, -1);

@@ -2,9 +2,6 @@
 # all numbers are stored as little endian
 # floats are stored as IEEE754
 
-# TODO: minimize manual header fields (tags, description), put those in sections?
-# TODO: more quantization support - scale / offset?
-
 short string:
     u8 length
     utf8 value = <length> utf8 bytes

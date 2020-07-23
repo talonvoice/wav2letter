@@ -119,7 +119,7 @@ af::array Engine::process(const af::array &features) {
 bool Engine::loadW2lModel(std::string acousticModelPath, std::string tokensPath) {
     // TODO: put feature type and params in model config section
     // FLAGS_mfsc = true;
-    // gflags::FlagSaver flagsave; // TODO: don't clobber global flags (wordpiece seems to use global flags for now)
+    // gflags::FlagSaver flagsave; // TODO: don't clobber global flags (wordpiece seems to need global flags for now)
     W2lSerializer::load(acousticModelPath, config, network, criterion);
     auto flags = config.find(kGflags);
     gflags::ReadFlagsFromString(flags->second, gflags::GetArgv0(), true);
@@ -127,7 +127,6 @@ bool Engine::loadW2lModel(std::string acousticModelPath, std::string tokensPath)
     criterionType = FLAGS_criterion;
     network->eval();
     criterion->eval();
-
     tokenDict = Dictionary(tokensPath);
     if (criterionType == kCtcCriterion) {
         tokenDict.addEntry(kBlankToken);
@@ -139,7 +138,8 @@ bool Engine::loadW2lModel(std::string acousticModelPath, std::string tokensPath)
 
 bool Engine::loadB2lModel(std::string path) {
     auto file = b2l::File::read_file(path);
-    // create a blank model from the arch
+
+    // load main sections
     auto config = file.section("config").keyval();
     auto arch = w2l::split("\n", file.section("arch").utf8());
     auto tokens = w2l::split("\n", file.section("tokens").utf8());
@@ -151,9 +151,11 @@ bool Engine::loadB2lModel(std::string path) {
     for (auto pair : flags) {
         flagsfile << "--" << pair.first << "=" << pair.second << "\n";
     }
+    // TODO: don't clobber global flags (wordpiece needs global flags for featurization)
     gflags::ReadFlagsFromString(flagsfile.str(), gflags::GetArgv0(), true);
     this->config[kGflags] = flagsfile.str();
 
+    // create a blank model from the arch
     network = createW2lSeqModule(arch, getSpeechFeatureSize(), tokens.size());
     // load the parameters
     auto layers = file.section("layers").layers();
@@ -162,16 +164,19 @@ bool Engine::loadB2lModel(std::string path) {
     for (ssize_t i = 0; i < layers.size(); i++) {
         auto &layer = layers[i];
         auto module = modules[i].get();
+        /*
         std::cout << "loading layer: " << layer.arch << "\n";
         std::cout << "matching module: " << layerArch(module) << "\n";
         std::cout << "layer params=" << layer.params.size() << "\n";
         std::cout << "module params=" << module->params().size() << "\n";
+        */
         for (ssize_t j = 0; j < layer.params.size(); j++) {
             auto &array = layer.params[j];
             switch (array.type()) {
                 case b2l::Array::Type::FP32: {
                     auto val = array.array<float>();
-                    module->param(j).array().write(val.data(), val.size());
+                    fl::Variable v(af::array(module->param(j).array().dims(), val.data()), false);
+                    module->setParams(v, j);
                     break;
                 }
                 default:
@@ -186,10 +191,12 @@ bool Engine::loadB2lModel(std::string path) {
     if (criterionType == kCtcCriterion) {
         criterion = std::make_shared<CTCLoss>(scalemode);
     } else if (criterionType == kAsgCriterion) {
-        criterion = std::make_shared<ASGLoss>(tokens.size(), scalemode, 0.0);
+        criterion = std::make_shared<ASGLoss>(tokens.size(), scalemode);
         // load transitions
         auto transitions = file.section("transitions").array<float>();
-        criterion->param(0).array().write(transitions.data(), transitions.size());
+        fl::Variable v(af::array(tokens.size(), tokens.size(), transitions.data()), false);
+        // need to use setParams to trigger ASGLoss->syncTransitions()
+        criterion->setParams(v, 0);
     } else {
         throw std::runtime_error("unsupported criterion");
     }
@@ -209,6 +216,7 @@ bool Engine::loadB2lModel(std::string path) {
     network->eval();
     criterion->eval();
 
+    tokenDict = Dictionary();
     for (auto &token : tokens) {
         tokenDict.addEntry(token);
     }
