@@ -143,7 +143,18 @@ bool Engine::loadB2lModel(std::string path) {
     auto config = file.section("config").keyval();
     auto arch = w2l::split("\n", file.section("arch").utf8());
     auto tokens = w2l::split("\n", file.section("tokens").utf8());
-    auto network = createW2lSeqModule(arch, getSpeechFeatureSize(), tokens.size());
+    while (tokens.back() == "") {
+        tokens.pop_back();
+    }
+    auto flags = file.section("flags").keyval();
+    std::ostringstream flagsfile;
+    for (auto pair : flags) {
+        flagsfile << "--" << pair.first << "=" << pair.second << "\n";
+    }
+    gflags::ReadFlagsFromString(flagsfile.str(), gflags::GetArgv0(), true);
+    this->config[kGflags] = flagsfile.str();
+
+    network = createW2lSeqModule(arch, getSpeechFeatureSize(), tokens.size());
     // load the parameters
     auto layers = file.section("layers").layers();
     auto seq = dynamic_cast<fl::Sequential *>(network.get());
