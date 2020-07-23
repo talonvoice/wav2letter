@@ -155,14 +155,12 @@ bool Engine::loadB2lModel(std::string path) {
         std::cout << "matching module: " << layerArch(module) << "\n";
         std::cout << "layer params=" << layer.params.size() << "\n";
         std::cout << "module params=" << module->params().size() << "\n";
-
-        for (ssize_t j = 0; j < layer.params.size(); i++) {
+        for (ssize_t j = 0; j < layer.params.size(); j++) {
             auto &array = layer.params[j];
             switch (array.type()) {
                 case b2l::Array::Type::FP32: {
                     auto val = array.array<float>();
-                    fl::Variable v(af::array(val.size(), val.data()), false);
-                    module->setParams(v, j);
+                    module->param(j).array().write(val.data(), val.size());
                     break;
                 }
                 default:
@@ -180,8 +178,7 @@ bool Engine::loadB2lModel(std::string path) {
         criterion = std::make_shared<ASGLoss>(tokens.size(), scalemode, 0.0);
         // load transitions
         auto transitions = file.section("transitions").array<float>();
-        fl::Variable v(af::array(transitions.size(), transitions.data()), false);
-        criterion->setParams(v, 0);
+        criterion->param(0).array().write(transitions.data(), transitions.size());
     } else {
         throw std::runtime_error("unsupported criterion");
     }
@@ -227,6 +224,7 @@ bool Engine::exportB2lModel(std::string path) {
     bool badLayer = false;
     for (auto &module : modules) {
         std::string layerString = layerArch(module.get());
+        std::cerr << "[w2lapi] exporting: " << layerString << std::endl;
         if (layerString == "") {
             badLayer = true;
             continue;
@@ -234,10 +232,6 @@ bool Engine::exportB2lModel(std::string path) {
         arch << layerString << "\n";
 
         auto flParams = module->params();
-        if (layerString.rfind("WN ", 0) == 0) {
-            auto wn = dynamic_cast<fl::WeightNorm *>(module.get());
-            flParams = wn->module()->params();
-        }
         std::vector<b2l::Array> params;
         params.reserve(flParams.size());
         for (auto &var : flParams) {
@@ -336,7 +330,6 @@ std::string Engine::layerArch(fl::Module *module) {
     std::ostringstream ostr;
     auto pretty = module->prettyString();
     auto type = pretty.substr(0, pretty.find(" ("));
-    std::cerr << "[w2lapi] exporting: " << pretty << std::endl;
 
     // TYPE: TRANSFORMATIONS
     if (type == "Reorder") {
@@ -383,6 +376,8 @@ std::string Engine::layerArch(fl::Module *module) {
 
         auto comma6 = parens.find(',', parens.find(',', comma4) + 1) + 1;
         std::tie(padX, padY) = splitOn(parens.substr(comma4, comma6 - comma4 - 1), ",");
+        if (padX == "SAME") padX = "-1";
+        if (padY == "SAME") padY = "-1";
 
         auto comma8 = parens.find(',', parens.find(',', comma6) + 1) + 1;
         std::tie(dilateX, dilateY) = splitOn(parens.substr(comma6, comma8 - comma6 - 1), ",");
