@@ -42,7 +42,7 @@ char *w2l_decoder_result_tokens(w2l_decoder *decoder, w2l_decoderesult *decodere
 void w2l_decoderesult_free(w2l_decoderesult *decoderesult);
 void w2l_decoder_free(w2l_decoder *decoder);
 
-bool w2l_make_flattrie(const char *tokens_path, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path);
+bool w2l_make_flattrie(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path);
 
 #pragma pack(1)
 typedef struct {
