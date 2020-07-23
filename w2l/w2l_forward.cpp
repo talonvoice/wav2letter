@@ -137,7 +137,7 @@ bool Engine::loadW2lModel(std::string acousticModelPath, std::string tokensPath)
 }
 
 bool Engine::loadB2lModel(std::string path) {
-    auto file = b2l::File::read_file(path);
+    auto file = b2l::File::open_file(path);
 
     // load main sections
     auto config = file.section("config").keyval();
