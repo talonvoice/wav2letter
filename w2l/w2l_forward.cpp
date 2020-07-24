@@ -229,7 +229,8 @@ bool Engine::loadB2lModel(std::string path) {
 }
 
 bool Engine::exportW2lModel(std::string path) {
-    return false;
+    W2lSerializer::save(path, config, network, criterion);
+    return true;
 }
 
 // TODO: catch C++ exceptions here, or in the C API wrapper

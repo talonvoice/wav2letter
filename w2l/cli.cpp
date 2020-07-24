@@ -41,19 +41,37 @@ int main(int argc, char **argv) {
             file.write_to(writer);
         }
     } else if (strcmp(argv[1], "unpack") == 0) {
-        if (argc != 3) {
+        if (argc != 4) {
             usage();
             return 1;
         }
         w2l_engine *engine = w2l_engine_new();
-        if (!w2l_engine_load_b2l(engine, argv[3])) {
+        if (!w2l_engine_load_b2l(engine, argv[2])) {
             printf("failed to load model: %s\n", argv[4]);
             return 1;
         }
-        if (!w2l_engine_export_w2l(engine, argv[2])) {
+#ifdef _WIN32
+        std::string sep = "\\";
+#else
+        std::string sep = "/";
+#endif
+        std::string dir = argv[3];
+        std::string am_path = dir + sep + "acoustic.bin";
+        std::string spm_path = dir + sep + "spm.bin";
+        std::string tokens_path = dir + sep + "tokens.txt";
+        if (!w2l_engine_export_w2l(engine, am_path.c_str())) {
             printf("failed to export model: %s\n", argv[2]);
             return 1;
         }
+        auto model = b2l::File::open_file(argv[2]);
+        if (model.has_section("spm")) {
+            auto spm = model.section("spm").data();
+            std::ofstream file(spm_path, std::ios::binary);
+            file.write((char *)spm.data(), spm.size());
+        }
+        auto tokens = model.section("tokens").utf8();
+        std::ofstream file(tokens_path);
+        file << tokens;
     } else {
         usage();
         return 1;
