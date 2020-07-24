@@ -265,7 +265,6 @@ bool Engine::exportB2lModel(std::string path) {
     }
 
     b2l::File file;
-
     // remove all path-related flags
     std::unordered_set<std::string> skip_flags{
         "train", "valid", "test", "archdir", "datadir", "rundir", "emission_dir", "log_dir",
@@ -289,7 +288,6 @@ bool Engine::exportB2lModel(std::string path) {
     file.add_section("arch").utf8(arch.str());
     file.add_section("tokens").utf8(exportTokens());
     file.add_section("layers").layers(layers);
-    // TODO: spm.bin!
 
     if (criterionType == kAsgCriterion) {
         auto params = criterion->param(0);
