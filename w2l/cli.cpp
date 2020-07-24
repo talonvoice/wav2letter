@@ -1,6 +1,8 @@
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <vector>
+
 #include "w2l.h"
 #include "b2l.h"
 
