@@ -662,6 +662,11 @@ public:
 
     File(std::string name="") : magic("BW2L"), version(1), name(name) {}
 
+    bool has_section(std::string name) {
+        auto idx = section_lookup.find(name);
+        return idx != section_lookup.end();
+    }
+
     Section &section(std::string name) {
         auto idx = section_lookup.find(name);
         if (idx == section_lookup.end()) {
