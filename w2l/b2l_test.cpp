@@ -154,7 +154,7 @@ void test_file_all_section_types() {
     utf8.utf8("test string");
 
     auto &keyval = file1.add_section("keyval");
-    std::unordered_map<std::string, std::string> keyval_map;
+    std::map<std::string, std::string> keyval_map;
     keyval_map["a"] = "b";
     keyval_map["another key"] = "another key";
     keyval_map["more keys"] = "more values";
