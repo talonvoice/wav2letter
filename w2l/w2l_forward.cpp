@@ -148,8 +148,11 @@ bool Engine::loadB2lModel(std::string path) {
     }
     auto flags = file.section("flags").keyval();
     std::ostringstream flagsfile;
-    for (auto pair : flags) {
-        flagsfile << "--" << pair.first << "=" << pair.second << "\n";
+    for (auto &pair : flags) {
+        auto &key = pair.first;
+        if (!key.empty() && !(key.size() == 1 && key[0] == '\0')) {
+            flagsfile << "--" << pair.first << "=" << pair.second << "\n";
+        }
     }
     // TODO: don't clobber global flags (wordpiece needs global flags for featurization)
     gflags::ReadFlagsFromString(flagsfile.str(), gflags::GetArgv0(), true);
@@ -265,19 +268,20 @@ bool Engine::exportB2lModel(std::string path) {
     }
 
     b2l::File file;
-    // remove all path-related flags
+    // empty all path-related flags
     std::unordered_set<std::string> skip_flags{
         "train", "valid", "test", "archdir", "datadir", "rundir", "emission_dir", "log_dir",
         "tokens", "lexicon", "lm_vocab", "lm", "sclite", "rndv_filepath",
     };
-    std::unordered_map<std::string, std::string> flags;
+    std::map<std::string, std::string> flags;
     std::string key, val;
     for (auto line : splitAll(config.find(kGflags)->second, "\n")) {
         std::tie(key, val) = splitOn(line, "=");
         trim(key, "-");
-        if (skip_flags.find(key) == skip_flags.end()) {
-            flags[key] = val;
+        if (skip_flags.find(key) != skip_flags.end()) {
+            val = "";
         }
+        flags[key] = val;
     }
     file.add_section("flags").keyval(flags);
 

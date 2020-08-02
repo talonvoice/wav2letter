@@ -3,6 +3,7 @@
 #include <functional>
 #include <iostream>
 #include <list>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <sstream>
@@ -538,10 +539,10 @@ public:
     }
 
     // section.keyval()
-    std::unordered_map<std::string, std::string> keyval() {
+    std::map<std::string, std::string> keyval() {
         this->assert_type("keyval");
         auto reader = this->reader();
-        std::unordered_map<std::string, std::string> tmp;
+        std::map<std::string, std::string> tmp;
         while (reader.tell() < _end && !reader.eof()) {
             std::string key = reader.short_string();
             std::string value = reader.long_string();
@@ -551,7 +552,7 @@ public:
         }
         return tmp;
     }
-    void keyval(std::unordered_map<std::string, std::string> &map) {
+    void keyval(std::map<std::string, std::string> &map) {
         type = "keyval";
         auto writer = this->writer();
         for (auto &pair : map) {
@@ -560,7 +561,7 @@ public:
         }
     }
     void keyval(std::initializer_list<std::pair<std::string, std::string>> init) {
-        std::unordered_map<std::string, std::string> map(init.begin(), init.end());
+        std::map<std::string, std::string> map(init.begin(), init.end());
         keyval(map);
     }
 
