@@ -528,7 +528,7 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
         return out;
     };
     auto tokensToStringDedup = [engineObj, decoderObj](const std::vector<int> &tokens, int from, int to) {
-        std::ostringstream ostr, tokostr;
+        std::ostringstream ostr;
         int tok = -1;
         bool lastBlank = false;
         for (int i = from; i < to; ++i) {
@@ -537,40 +537,17 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             tok = tokens[i];
             if (tok >= 0 && tok != decoderObj->blankIdx) {
                 std::string s = engineObj->tokenDict.getEntry(tok);
-                // (word piece) check for token prefix / suffix
-                if (! lastBlank) {
-                    lastBlank = false;
-                    std::string tokstr = tokostr.str();
-                    // collapse (_ab _abc) into (_abc)
-                    if (tokstr.size() < s.size() && s.compare(0, tokstr.size(), tokstr) == 0) {
-                        // discard old token
-                        tokostr.seekp(0);
-                    // collapse (_abc bc) into (_abc)
-                    } else if (tokstr.size() > s.size() && tokstr.compare(tokstr.size()-s.size(), s.size(), s) == 0) {
-                        // discard new token
-                        continue;
-                    }
-                }
                 if (!s.empty() && s[0] == '_') {
-                    tokostr << " ";
+                    if (ostr.tellp() > 0) {
+                        ostr << " ";
+                    }
                     s = s.substr(1);
                 }
-                tokostr << s;
+                ostr << s;
             }
             lastBlank = (tok == decoderObj->blankIdx);
-            if (lastBlank && tokostr.tellp() > 0) {
-                // flush token on blank
-                ostr << tokostr.str();
-                tokostr = std::ostringstream();
-            }
         }
-        // flush last token
-        ostr << tokostr.str();
-        std::string str = ostr.str();
-        if (!str.empty() and str[0] == ' ') {
-            str = str.substr(1);
-        }
-        return str;
+        return ostr.str();
     };
 
     auto viterbiToks =
