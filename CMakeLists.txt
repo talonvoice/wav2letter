@@ -143,14 +143,14 @@ set(IPP_LIBS ${LIBIPPS} ${LIBIPPCORE} ${LIBIPPVM})
 add_library(w2l SHARED
     ${COMMON_SRC}
     ${FEATURE_SRC}
-    ${INFERENCE_SRC}
     ${DECODER_SRC}
     ${MODULE_SRC}
     ${CRITERION_SRC}
     ${DATA_SRC}
 
-    w2l/w2l.cpp
-    w2l/w2l_forward.cpp
+    w2l/w2l_encode.cpp
+    w2l/w2l_decode.cpp
+    w2l/w2l_encode_backend.cpp
 )
 if (USE_MKL)
     target_compile_definitions(w2l PUBLIC -DUSE_MKL -DW2L_LIBRARIES_USE_MKL)
@@ -172,23 +172,43 @@ target_link_libraries(w2l
     ${GFLAGS_LIBRARIES}
     ${GLOG_LIBRARIES}
     ${LIBOMP}
-
-    # fbgemm
-    fbgemm
-    cpuinfo
-    asmjit
-    clog
-    pthread
-    dl
 )
 if (APPLE)
     target_link_libraries(w2l -Wl,-cache_path_lto,/tmp/lto-cache)
     add_definitions(-Xpreprocessor -fopenmp)
 endif()
 
-message(STATUS "flashlight: ${FLASHLIGHT_INCLUDE_DIRS}")
 target_include_directories(
   w2l
+  PUBLIC
+  ${PROJECT_SOURCE_DIR}/src
+  ${KENLM_INCLUDE_DIRS}
+  ${FLASHLIGHT_INCLUDE_DIRS}
+)
+
+# w2ldecode target
+add_library(w2ldecode SHARED
+    ${COMMON_SRC}
+    ${DECODER_SRC}
+    w2l/w2l_decode.cpp
+)
+
+set_target_properties(ArrayFire::afcpu PROPERTIES INTERFACE_LINK_LIBRARIES "")
+target_link_libraries(w2ldecode
+    "-L${PROJECT_SOURCE_DIR}/../opt/lib"
+    ${KENLM_LIBRARIES}
+    ${OPENMP_LIBRARIES}
+    ${GFLAGS_LIBRARIES}
+    ${GLOG_LIBRARIES}
+    ${LIBOMP}
+)
+if (APPLE)
+    target_link_libraries(w2ldecode -Wl,-cache_path_lto,/tmp/lto-cache)
+    add_definitions(-Xpreprocessor -fopenmp)
+endif()
+
+target_include_directories(
+  w2ldecode
   PUBLIC
   ${PROJECT_SOURCE_DIR}/src
   ${KENLM_INCLUDE_DIRS}
@@ -244,5 +264,5 @@ target_link_libraries(w2l_cli w2l)
 # )
 # target_link_libraries(simple_example w2lstream)
 
-install(TARGETS w2l   w2lstream DESTINATION lib)
-install(FILES   w2l/w2l.h w2l/w2lstream.h DESTINATION include)
+install(TARGETS w2l w2ldecode w2lstream DESTINATION lib)
+install(FILES   w2l/w2l_encode.h w2l/w2l_decode.h w2l/w2lstream.h DESTINATION include)

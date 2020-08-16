@@ -92,8 +92,6 @@ namespace KenFlatTrieLM {
     };
 };
 
-
-
 #pragma pack(push, 1)
 template <typename LMStateType>
 struct SimpleDecoderState {
@@ -311,7 +309,7 @@ struct BeamSearch
     };
 
     template <typename Range, typename Hooks = DefaultHooks<DecoderState>>
-    Result run(const float *emissions,
+    Result run(w2l_emission *emission,
                const int startFrame,
                const int frames,
                Range initialHyp,
@@ -321,13 +319,14 @@ struct BeamSearch
 template <typename LM, typename LMStateType>
 template <typename Range, typename Hooks>
 auto BeamSearch<LM, LMStateType>::run(
-        const float *emissions,
+        w2l_emission *emission,
         const int startFrame,
         const int frames,
         Range initialHyp,
         Hooks &hooks) const
     -> Result
 {
+    float *emissions = &emission->matrix[0];
     std::vector<std::vector<DecoderState>> hyp;
     hyp.resize(frames + 1, std::vector<DecoderState>());
 
@@ -511,32 +510,28 @@ struct SimpleDecoder
     using DecoderState = SimpleDecoderState<LMStateType>;
     using Search = BeamSearch<LM, LMStateType>;
 
-    DecoderOptions opt_;
     LM lm_;
     int sil_;
     int blank_;
     int unk_;
     std::vector<float> transitions_;
 
-    DecodeResult normal(const float *emissions,
-                        const int frames,
-                        const int nTokens,
+    DecodeResult normal(DecoderOptions &opt,
+                        w2l_emission *emission,
                         const LMStateType startState) const;
 
     // Like normal, but returns the full beam search state
     // Also, doesn't finish() the language model
     template <typename BeamHooks = DefaultHooks<DecoderState>>
-    auto normalAll(const float *emissions,
-                   const int frames,
-                   const int nTokens,
+    auto normalAll(DecoderOptions &opt,
+                   w2l_emission *emission,
                    const std::vector<DecoderState> &startStates,
                    BeamHooks &hooks = DefaultHooks<DecoderState>::instance) const
         -> typename Search::Result;
 
     template <typename BeamHooks>
-    auto groupThreading(const float *emissions,
-                        const int frames,
-                        const int nTokens,
+    auto groupThreading(DecoderOptions &opt,
+                        w2l_emission *emission,
                         const std::vector<DecoderState> &startStates,
                         BeamHooks &hooks,
                         const int nThreads,
@@ -544,7 +539,8 @@ struct SimpleDecoder
                         const int threadBeamSize) const
         -> typename Search::Result;
 
-//    DecodeResult diversity(const float *emissions,
+//    DecodeResult diversity(DecoderOptions &opt,
+//                           const float *emissions,
 //                           const int frames,
 //                           const int nTokens) const;
 };
@@ -573,9 +569,8 @@ static DecodeResult _getHypothesis(const DecoderState* node, const int finalFram
 
 template <typename LM, typename LMStateType>
 auto SimpleDecoder<LM, LMStateType>::normal(
-        const float *emissions,
-        const int frames,
-        const int nTokens,
+        DecoderOptions &opt,
+        w2l_emission *emission,
         const LMStateType startState) const
     -> DecodeResult
 {
@@ -584,19 +579,19 @@ auto SimpleDecoder<LM, LMStateType>::normal(
     hyp[0].emplace_back(startState, nullptr, 0.0, sil_, -1);
 
     Search beamSearch{
-        .opt_ = opt_,
+        .opt_ = opt,
         .transitions_ = transitions_,
         .lm_ = lm_,
         .sil_ = sil_,
         .blank_ = blank_,
         .unk_ = unk_,
-        .nTokens_ = nTokens,
+        .nTokens_ = emission->n_tokens,
     };
 
-    auto beams = beamSearch.run(emissions, 0, frames, rangeAdapter(hyp[0]));
+    auto beams = beamSearch.run(emission, 0, emission->n_frames, rangeAdapter(hyp[0]));
 
     std::vector<DecoderState> result;
-    beamSearchFinish(result, beams.hyp.back(), lm_, opt_);
+    beamSearchFinish(result, beams.hyp.back(), lm_, opt);
 
     return _getHypothesis(&result[0], beams.hyp.size());
 }
@@ -604,32 +599,30 @@ auto SimpleDecoder<LM, LMStateType>::normal(
 template <typename LM, typename LMStateType>
 template <typename BeamHooks>
 auto SimpleDecoder<LM, LMStateType>::normalAll(
-        const float *emissions,
-        const int frames,
-        const int nTokens,
+        DecoderOptions &opt,
+        w2l_emission *emission,
         const std::vector<DecoderState> &startStates,
         BeamHooks &hooks) const
     -> typename Search::Result
 {
     Search beamSearch{
-        .opt_ = opt_,
+        .opt_ = opt,
         .transitions_ = transitions_,
         .lm_ = lm_,
         .sil_ = sil_,
         .blank_ = blank_,
         .unk_ = unk_,
-        .nTokens_ = nTokens,
+        .nTokens_ = emission->n_tokens,
     };
 
-    return beamSearch.run(emissions, 0, frames, rangeAdapter(startStates), hooks);
+    return beamSearch.run(emission, 0, emission->n_frames, rangeAdapter(startStates), hooks);
 }
 
 template <typename LM, typename LMStateType>
 template <typename BeamHooks>
 auto SimpleDecoder<LM, LMStateType>::groupThreading(
-        const float *emissions,
-        const int frames,
-        const int nTokens,
+        DecoderOptions &opt,
+        w2l_emission *emission,
         const std::vector<DecoderState> &startStates,
         BeamHooks &hooks,
         const int nThreads,
@@ -640,6 +633,7 @@ auto SimpleDecoder<LM, LMStateType>::groupThreading(
     // Run Q-steps of beamseach on subgroups of hyp
     int Q = stepsPerFanout;
     int n_groups = nThreads;
+    int frames = emission->n_frames;
 
     typename Search::Result result;
     // essential to avoid reallocations
@@ -655,13 +649,13 @@ auto SimpleDecoder<LM, LMStateType>::groupThreading(
         int t = 0;
 
         Search beamSearch{
-            .opt_ = opt_,
+            .opt_ = opt,
             .transitions_ = transitions_,
             .lm_ = lm_,
             .sil_ = sil_,
             .blank_ = blank_,
             .unk_ = unk_,
-            .nTokens_ = nTokens,
+            .nTokens_ = emission->n_tokens,
         };
         beamSearch.opt_.beamSize = threadBeamSize;
 
@@ -670,7 +664,7 @@ auto SimpleDecoder<LM, LMStateType>::groupThreading(
 
             #pragma omp for
             for (size_t group = 0; group < n_groups; ++group) {
-                auto subResult = beamSearch.run(emissions, t, steps, rangeAdapter(*startHyp, group, n_groups));
+                auto subResult = beamSearch.run(emission, t, steps, rangeAdapter(*startHyp, group, n_groups));
 
                 #pragma omp critical
                 {
@@ -693,7 +687,7 @@ auto SimpleDecoder<LM, LMStateType>::groupThreading(
             {
                 std::vector<DecoderState> newHyp;
                 beamSearchSelectBestCandidates(newHyp, candidates,
-                                               candidatesBestScore - opt_.beamThreshold, lm_, opt_.beamSize);
+                                               candidatesBestScore - opt.beamThreshold, lm_, opt.beamSize);
                 candidates.clear();
                 result.hyp.emplace_back(std::move(newHyp));
                 result.bestBeamScore = candidatesBestScore;

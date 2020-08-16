@@ -1,4 +1,5 @@
 #include <flashlight/autograd/Variable.h>
+#include "libraries/common/Dictionary.h"
 
 namespace w2l {
 class SequenceCriterion;
@@ -11,34 +12,12 @@ class Variable;
 
 using namespace w2l;
 
-class EngineBase {
-public:
-    int numClasses;
-    std::unordered_map<std::string, std::string> config;
-    std::shared_ptr<fl::Module> network;
-    std::shared_ptr<SequenceCriterion> criterion;
-    std::string criterionType;
-    Dictionary tokenDict;
-};
-
-class Emission {
-public:
-    Emission(EngineBase *engine, af::array emission, af::array inputs);
-    ~Emission() {}
-
-    char *text();
-
-    EngineBase *engine;
-    af::array emission;
-    af::array inputs;
-};
-
-class Engine : public EngineBase {
+class Engine {
 public:
     Engine();
     ~Engine() {}
 
-    Emission *process(float *samples, size_t sample_count);
+    w2l_emission *forward(float *samples, size_t sample_count);
     af::array process(const af::array &features);
 
     bool loadW2lModel(std::string modelPath, std::string tokensPath);
@@ -52,6 +31,12 @@ public:
 private:
     std::string exportTokens();
     std::string layerArch(fl::Module *module);
+
 private:
     bool loaded;
+    std::unordered_map<std::string, std::string> config;
+    std::shared_ptr<fl::Module> network;
+    std::shared_ptr<SequenceCriterion> criterion;
+    std::string criterionType;
+    Dictionary tokenDict;
 };
