@@ -108,6 +108,10 @@ set(MODULE_SRC
     src/module/W2lModule.cpp
 )
 
+set(VITERBI_SRC
+    src/libraries/criterion/cpu/ViterbiPath.cpp
+)
+
 set(CRITERION_SRC
     src/criterion/ConnectionistTemporalClassificationCriterion.cpp
     src/criterion/CriterionUtils.cpp
@@ -190,6 +194,7 @@ target_include_directories(
 add_library(w2ldecode SHARED
     ${COMMON_SRC}
     ${DECODER_SRC}
+    ${VITERBI_SRC}
     w2l/w2l_decode.cpp
 )
 

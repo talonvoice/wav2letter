@@ -1,12 +1,11 @@
 #include <cassert>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdlib.h>
 #include <string>
 #include <typeinfo>
 #include <unordered_set>
-
-#include <glog/logging.h>
 
 #include "common/Transforms.h"
 #include "common/Utils.h"
@@ -16,9 +15,12 @@
 #include "libraries/lm/KenLM.h"
 #include "libraries/common/WordUtils.h"
 
-#include "w2l_decode.h"
+// for viterbi path
+#include "libraries/criterion/cpu/ViterbiPath.h"
 
 using namespace w2l;
+
+#include "w2l_decode.h"
 #include "decode_core.cpp"
 
 namespace w2l {
@@ -26,7 +28,34 @@ namespace w2l {
 std::string join(const std::string& delim, const std::vector<std::string>& vec);
 }
 
-using namespace w2l;
+class GreedyDecoder {
+public:
+    static void decodeASG(w2l_emission *emission, float *transitions, int *path_out) {
+        int T = emission->n_tokens;
+        int N = emission->n_frames;
+        float *emissions = &emission->matrix[0];
+        std::vector<uint8_t> workspace(w2l::cpu::ViterbiPath<float>::getWorkspaceSize(1, T, N));
+        w2l::cpu::ViterbiPath<float>::compute(
+            1, // B
+            T,
+            N,
+            emissions,
+            transitions,
+            path_out,
+            workspace.data());
+    }
+
+    static void decodeCTC(w2l_emission *emission, int *path_out) {
+        int T = emission->n_tokens;
+        int N = emission->n_frames;
+        float *emissions = &emission->matrix[0];
+        // CTC viterbi is just argmax
+        for (int t = 0; t < T; t++) {
+            auto it = std::max_element(&emissions[t], &emissions[t + N]);
+            path_out[t] = std::distance(&emissions[t], it);
+        }
+    }
+};
 
 DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts) {
     CriterionType criterionType;
@@ -35,8 +64,8 @@ DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts) {
     } else if (opts.criterion == kAsgCriterion) {
         criterionType = CriterionType::ASG;
     } else {
-        // FIXME:
-        LOG(FATAL) << "[Decoder] Invalid model type: " << opts.criterion;
+        std::cerr << "[Decoder] Invalid criterion type: " << opts.criterion << std::endl;
+        abort();
     }
     return DecoderOptions(
                 opts.beamsize,
@@ -85,9 +114,14 @@ class PublicDecoder {
 public:
     PublicDecoder(const char *tokens, const char *languageModelPath, const char *lexiconPath, const char *flattriePath, const w2l_decode_options *opts) {
         this->setOptions(opts);
-        // TODO: parse token string into tokenDict here just like loadB2lModel()
-        // tokenDict.addEntry() // TODO...
-        // tokenDict = engine->tokenDict;
+        auto tokenStream = std::istringstream(tokens);
+        tokenDict = Dictionary(tokenStream);
+        // TODO: ensure that resulting tokenDict.indexSize() > 0?
+        if (decoderOpt.criterionType == CriterionType::CTC &&
+                tokenDict.indexSize() > 0 &&
+                tokenDict.getEntry(tokenDict.indexSize() - 1) != kBlankToken) {
+            tokenDict.addEntry(kBlankToken);
+        }
 
         globalTokens = &tokenDict;
         silIdx = getSilIdx(tokenDict);
@@ -155,6 +189,18 @@ public:
         //return decoder.groupThreading(emissionVec.data(), T, N);
     }
 
+    void decodeGreedy(w2l_emission *emission, int *path) {
+        if (decoderOpt.criterionType == CriterionType::CTC) {
+            GreedyDecoder::decodeCTC(emission, path);
+        } else if (decoderOpt.criterionType == CriterionType::ASG) {
+            assert(transitions.size() == emission->n_tokens);
+            GreedyDecoder::decodeASG(emission, &transitions[0], path);
+        } else {
+            std::cerr << "[Decoder] Unknown criterion enum: " << (int)decoderOpt.criterionType << std::endl;
+            abort();
+        }
+    }
+
     char *decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t dfa_size);
 
     char *resultWords(const DecodeResult &result) {
@@ -182,12 +228,10 @@ public:
         return strdup(out.c_str());
     }
 
-    // TODO: move this function into the decoder code, and remove the engine requirement
-    // TODO: implement "tokens from string" and use it here and in decoder (and engine?)
     static bool makeFlattrie(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path) {
-        // auto engineObj = reinterpret_cast<Engine *>(engine);
-        // auto tokenDict = engineObj->tokenDict;
-        Dictionary tokenDict;
+        auto tokenStream = std::istringstream(tokens);
+        Dictionary tokenDict(tokenStream);
+        // TODO: ensure that resulting tokenDict.indexSize() > 0?
         auto silIdx = getSilIdx(tokenDict);
 
         auto lexicon = loadWords(lexicon_path, -1);
@@ -487,12 +531,6 @@ struct ViterbiDifferenceRejecter {
 };
 
 char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t dfa_size) {
-    /*
-    auto emissionVec = afToVector<float>(rawEmission);
-    int T = rawEmission.dims(0);
-    int N = rawEmission.dims(1);
-    */
-
     auto tokensToString = [this](const std::vector<int> &tokens, int from, int to) {
         std::string out;
         for (int i = from; i < to; ++i)
@@ -522,10 +560,9 @@ char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t
         return ostr.str();
     };
 
-    // TODO: actually do viterbi somewhere "greedy decode" per criterion
-    std::vector<int> viterbiToks;
-    // auto viterbiToks = afToVector<int>(engineObj->viterbiPath(rawEmission));
-    assert(N == viterbiToks.size());
+    // TODO: we already do viterbi from Talon, so allow passing in a cached viterbi path?
+    std::vector<int> viterbiToks(emission->n_frames);
+    decodeGreedy(emission, &viterbiToks[0]);
 
     // Lets skip decoding if viterbi thinks it's all silence
     bool allSilence = true;

@@ -80,20 +80,6 @@ std::string findParens(std::string s, std::string left="(", std::string right=")
 
 }
 
-/*
-char *Emission::text() {
-    auto tokenPrediction =
-        afToVector<int>(engine->criterion->viterbiPath(emission));
-    auto letters = tknPrediction2Ltr(tokenPrediction, engine->tokenDict);
-    if (letters.size() > 0) {
-        std::ostringstream ss;
-        for (auto s : letters) ss << s;
-        return strdup(ss.str().c_str());
-    }
-    return strdup("");
-}
-*/
-
 w2l_emission *afToEmission(af::array af) {
     int N = af.dims(0);
     int T = af.dims(1);
@@ -146,10 +132,17 @@ bool Engine::loadB2lModel(std::string path) {
     // load main sections
     auto config = file.section("config").keyval();
     auto arch = w2l::split("\n", file.section("arch").utf8());
-    auto tokens = w2l::split("\n", file.section("tokens").utf8());
-    while (tokens.back() == "") {
-        tokens.pop_back();
+    criterionType = config["criterion"];
+
+    auto tokenStream = std::istringstream(file.section("tokens").utf8());
+    tokenDict = Dictionary(tokenStream);
+    // TODO: ensure that resulting tokenDict.indexSize() > 0?
+    if (criterionType == kCtcCriterion &&
+            tokenDict.indexSize() > 0 &&
+            tokenDict.getEntry(tokenDict.indexSize() - 1) != kBlankToken) {
+        tokenDict.addEntry(kBlankToken);
     }
+
     auto flags = file.section("flags").keyval();
     std::ostringstream flagsfile;
     for (auto &pair : flags) {
@@ -163,7 +156,7 @@ bool Engine::loadB2lModel(std::string path) {
     this->config[kGflags] = flagsfile.str();
 
     // create a blank model from the arch
-    network = createW2lSeqModule(arch, getSpeechFeatureSize(), tokens.size());
+    network = createW2lSeqModule(arch, getSpeechFeatureSize(), tokenDict.indexSize());
     // load the parameters
     auto layers = file.section("layers").layers();
     auto seq = dynamic_cast<fl::Sequential *>(network.get());
@@ -193,21 +186,20 @@ bool Engine::loadB2lModel(std::string path) {
     }
     // create blank criterion
     // TODO: stuff a serialized criterion in the b2l file?
-    criterionType = config["criterion"];
     auto scalemode = CriterionScaleMode::NONE;
     if (criterionType == kCtcCriterion) {
         criterion = std::make_shared<CTCLoss>(scalemode);
     } else if (criterionType == kAsgCriterion) {
-        criterion = std::make_shared<ASGLoss>(tokens.size(), scalemode);
+        criterion = std::make_shared<ASGLoss>(tokenDict.indexSize(), scalemode);
         // load transitions
         auto transitions = file.section("transitions").array<float>();
-        fl::Variable v(af::array(tokens.size(), tokens.size(), transitions.data()), false);
+        fl::Variable v(af::array(tokenDict.indexSize(), tokenDict.indexSize(), transitions.data()), false);
         // need to use setParams to trigger ASGLoss->syncTransitions()
         criterion->setParams(v, 0);
     } else {
         throw std::runtime_error("unsupported criterion");
     }
-    /*
+    /* {
     } else if (criterionType == kSeq2SeqCriterion) {
       criterion = std::make_shared<Seq2SeqCriterion>(buildSeq2Seq(numClasses, tokenDict.getIndex(kEosToken)));
     } else if (criterionType == kTransformerCriterion) {
@@ -218,18 +210,11 @@ bool Engine::loadB2lModel(std::string path) {
               FLAGS_am_decoder_tr_dropout,
               FLAGS_am_decoder_tr_layerdrop,
               tokenDict.getIndex(kEosToken)));
+    }
     */
 
     network->eval();
     criterion->eval();
-
-    tokenDict = Dictionary();
-    for (auto &token : tokens) {
-        tokenDict.addEntry(token);
-    }
-    if (criterionType == kCtcCriterion && tokens.back() != kBlankToken) {
-        tokenDict.addEntry(kBlankToken);
-    }
     loaded = true;
     return true;
 }
@@ -307,37 +292,11 @@ bool Engine::exportB2lModel(std::string path) {
     return true;
 }
 
-/*
-bool Engine::exportW2lModel(const char *path) {
-    std::ofstream outfile;
-    outfile.open(path, std::ios::out | std::ios::binary);
-    if (!outfile.is_open()) {
-            std::cout << "[w2lapi] error, could not open file '" << path << "' (aborting export)" << std::endl;
-        return false;
-    }
-
-    auto seq = dynamic_cast<fl::Sequential *>(network.get());
-    exportTokens(outfile);
-    exportTransitions(outfile);
-    for (auto &module : seq->modules()) {
-        if (!exportLayer(outfile, module.get())) {
-            std::cout << "[w2lapi] aborting export" << std::endl;
-            return false;
-        }
-    }
-    return true;
-}
-*/
-
 std::vector<float> Engine::transitions() const {
     if (criterionType == kAsgCriterion) {
         return afToVector<float>(criterion->param(0).array());
     }
     return {};
-}
-
-af::array Engine::viterbiPath(const af::array &data) const {
-    return criterion->viterbiPath(data);
 }
 
 // export functions
