@@ -1,13 +1,13 @@
+#include <cassert>
+#include <fstream>
 #include <iostream>
 #include <stdlib.h>
 #include <string>
 #include <typeinfo>
-#include <cassert>
+#include <unordered_set>
 
-#include <gflags/gflags.h>
 #include <glog/logging.h>
 
-#include "common/Defines.h"
 #include "common/Transforms.h"
 #include "common/Utils.h"
 #include "libraries/common/Dictionary.h"
@@ -16,37 +16,28 @@
 #include "libraries/lm/KenLM.h"
 #include "libraries/common/WordUtils.h"
 
-#include "w2l.h"
-#include "w2l_p.h"
+#include "w2l_decode.h"
 
-#include "simpledecoder.cpp"
+using namespace w2l;
+#include "decode_core.cpp"
 
 namespace w2l {
 // from common/Utils.h (which includes flashlight, so we don't include it)
 std::string join(const std::string& delim, const std::vector<std::string>& vec);
 }
 
-template <typename T>
-std::vector<T> afToVector(const af::array& arr) {
-  std::vector<T> vec(arr.elements());
-  arr.host(vec.data());
-  return vec;
-}
-
-w2l_decode_options w2l_decode_defaults {
-    500,
-    100,
-    25,
-    1.0,
-    1.0,
-    -INFINITY,
-    false,
-    0.0,
-};
-
 using namespace w2l;
 
-DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts, w2l::CriterionType criterionType) {
+DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts) {
+    CriterionType criterionType;
+    if (opts.criterion == kCtcCriterion) {
+        criterionType = CriterionType::CTC;
+    } else if (opts.criterion == kAsgCriterion) {
+        criterionType = CriterionType::ASG;
+    } else {
+        // FIXME:
+        LOG(FATAL) << "[Decoder] Invalid model type: " << opts.criterion;
+    }
     return DecoderOptions(
                 opts.beamsize,
                 25000, // beamsizetoken
@@ -90,10 +81,14 @@ static int getSilIdx(Dictionary &tokenDict) {
     return 0;
 }
 
-class WrapDecoder {
+class PublicDecoder {
 public:
-    WrapDecoder(Engine *engine, const char *languageModelPath, const char *lexiconPath, const char *flattriePath, const w2l_decode_options *opts) {
-        tokenDict = engine->tokenDict;
+    PublicDecoder(const char *tokens, const char *languageModelPath, const char *lexiconPath, const char *flattriePath, const w2l_decode_options *opts) {
+        this->setOptions(opts);
+        // TODO: parse token string into tokenDict here just like loadB2lModel()
+        // tokenDict.addEntry() // TODO...
+        // tokenDict = engine->tokenDict;
+
         globalTokens = &tokenDict;
         silIdx = getSilIdx(tokenDict);
         if (tokenDict.contains(kBlankToken)) {
@@ -101,6 +96,10 @@ public:
         } else {
             blankIdx = -1;
         }
+        if (decoderOpt.criterionType == CriterionType::ASG) {
+            blankIdx = silIdx;
+        }
+
         wordList = loadWordList(lexiconPath);
         lm = std::make_shared<KenLM>(languageModelPath, wordList);
 
@@ -111,52 +110,52 @@ public:
         flatTrieIn >> byteSize;
         flatTrie->storage.resize(byteSize / 4);
         flatTrieIn.read(reinterpret_cast<char *>(flatTrie->storage.data()), byteSize);
+        // TODO: some load-time checks here?
 
         // the root maxScore should be 0 during search and it's more convenient to set here
         const_cast<FlatTrieNode *>(flatTrie->getRoot())->maxScore = 0;
+    }
+    ~PublicDecoder() {}
 
-        CriterionType criterionType;
-        if (engine->criterionType == kCtcCriterion) {
-            criterionType = CriterionType::CTC;
-        } else if (engine->criterionType == kAsgCriterion) {
-            criterionType = CriterionType::ASG;
-            blankIdx = 0;
-        } else {
-            // FIXME:
-            LOG(FATAL) << "[Decoder] Invalid model type: " << engine->criterionType;
+    void setOptions(const w2l_decode_options *opts) {
+        // safely retain external opts by copying transitions array and criterion string
+        this->opts = *opts;
+        this->opts.transitions = nullptr;
+        this->transitions.resize(opts->transitions_size);
+        if (opts->transitions != nullptr && opts->transitions_size > 0) {
+            std::copy(opts->transitions, opts->transitions + opts->transitions_size, this->transitions.begin());
         }
-        decoderOpt = toW2lDecoderOptions(*opts, criterionType);
+        if (opts->criterion == std::string("asg")) {
+            this->opts.criterion = "asg";
+        } else if (opts->criterion == std::string("ctc")) {
+            this->opts.criterion = "ctc";
+        } else if (opts->criterion == std::string("s2s")) {
+            this->opts.criterion = "s2s";
+        } else {
+            this->opts.criterion = "";
+        }
+        decoderOpt = toW2lDecoderOptions(*opts);
+    }
+
+    DecodeResult decode(w2l_emission *emission) {
+        KenFlatTrieLM::State startState;
+        startState.lex = flatTrie->getRoot();
+        startState.kenState = lm->start(0);
 
         KenFlatTrieLM::LM lmWrap;
         lmWrap.ken = lm;
         lmWrap.trie = flatTrie;
-
-        auto transition = engine->transitions();
-        decoder.reset(new SimpleDecoder<KenFlatTrieLM::LM, KenFlatTrieLM::State>{
-            decoderOpt,
+        auto decoder = SimpleDecoder<KenFlatTrieLM::LM, KenFlatTrieLM::State>{
             lmWrap,
             silIdx,
             blankIdx,
             unkLabel,
-            transition});
+            transitions};
+        return decoder.normal(decoderOpt, emission, startState);
+        //return decoder.groupThreading(emissionVec.data(), T, N);
     }
-    ~WrapDecoder() {}
 
-    DecodeResult decode(Emission *emission) {
-        auto rawEmission = emission->emission;
-        auto emissionVec = afToVector<float>(rawEmission);
-        int N = rawEmission.dims(0);
-        int T = rawEmission.dims(1);
-
-        std::vector<float> score;
-        std::vector<std::vector<int>> wordPredictions;
-        std::vector<std::vector<int>> letterPredictions;
-        KenFlatTrieLM::State startState;
-        startState.lex = flatTrie->getRoot();
-        startState.kenState = lm->start(0);
-        return decoder->normal(emissionVec.data(), T, N, startState);
-        //return decoder->groupThreading(emissionVec.data(), T, N);
-    }
+    char *decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t dfa_size);
 
     char *resultWords(const DecodeResult &result) {
         auto rawWordPrediction = validateIdx(result.words, unkLabel);
@@ -183,15 +182,82 @@ public:
         return strdup(out.c_str());
     }
 
+    // TODO: move this function into the decoder code, and remove the engine requirement
+    // TODO: implement "tokens from string" and use it here and in decoder (and engine?)
+    static bool makeFlattrie(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path) {
+        // auto engineObj = reinterpret_cast<Engine *>(engine);
+        // auto tokenDict = engineObj->tokenDict;
+        Dictionary tokenDict;
+        auto silIdx = getSilIdx(tokenDict);
+
+        auto lexicon = loadWords(lexicon_path, -1);
+        auto wordList = loadWordList(lexicon_path);
+
+        Dictionary wordDict;
+        for (const auto& it : wordList) {
+            wordDict.addEntry(it);
+        }
+        wordDict.setDefaultIndex(wordDict.getIndex(kUnkToken));
+
+        // taken from Decode.cpp
+        // Build Trie
+        KenLM lm(kenlm_model_path, wordDict);
+        Trie trie(tokenDict.indexSize(), silIdx);
+        auto startState = lm.start(false);
+        for (auto& it : lexicon) {
+            const std::string& word = it.first;
+            int usrIdx = wordDict.getIndex(word);
+            float score = -1;
+            // if (FLAGS_decodertype == "wrd")
+            if (true) {
+                LMStatePtr dummyState;
+                std::tie(dummyState, score) = lm.score(startState, usrIdx);
+            }
+            for (auto& tokens : it.second) {
+                auto tokensTensor = tkn2Idx(tokens, tokenDict, false /* replabel */ );
+                trie.insert(tokensTensor, usrIdx, score);
+            }
+        }
+
+        // Smearing
+        // TODO: smear mode argument?
+        SmearingMode smear_mode = SmearingMode::MAX;
+        /*
+        SmearingMode smear_mode = SmearingMode::NONE;
+        if (FLAGS_smearing == "logadd") {
+            smear_mode = SmearingMode::LOGADD;
+        } else if (FLAGS_smearing == "max") {
+            smear_mode = SmearingMode::MAX;
+        } else if (FLAGS_smearing != "none") {
+            LOG(FATAL) << "[Decoder] Invalid smearing mode: " << FLAGS_smearing;
+        }
+        */
+        trie.smear(smear_mode);
+
+        auto flatTrie = toFlatTrie(trie.getRoot());
+
+        std::ofstream out(flattrie_path, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!out.is_open())
+            return false;
+
+        size_t byteSize = 4 * flatTrie.storage.size();
+        out << byteSize;
+        out.write(reinterpret_cast<const char*>(flatTrie.storage.data()), byteSize);
+        out.close();
+        return out.good();
+    }
+
     std::shared_ptr<KenLM> lm;
     FlatTriePtr flatTrie;
-    std::unique_ptr<SimpleDecoder<KenFlatTrieLM::LM, KenFlatTrieLM::State>> decoder;
     std::vector<std::string> wordList;
     Dictionary tokenDict;
     DecoderOptions decoderOpt;
     int silIdx;
     int blankIdx;
     int unkLabel = 0;
+
+    std::vector<float> transitions;
+    w2l_decode_options opts = {};
 };
 
 namespace DFALM {
@@ -359,23 +425,24 @@ struct ViterbiDifferenceRejecter {
     int windowMaxSize;
     int silIdx;
     float threshold;
-    float *emissions;
+    w2l_emission *emission;
     float *transitions;
     int T;
 
     float extraNewTokenScore(int frame, const CombinedDecoder::DecoderState &prevState, int token) const {
+        int t = emission->n_tokens;
         auto refScore = viterbiWindowScores[frame];
 
         bool allSilence = token == silIdx;
         int prevToken = token;
         auto thisState = &prevState;
-        float thisScore = emissions[frame * T + token];
+        float thisScore = emission->matrix[frame * T + token];
         int thisWindow = 1;
         while (thisWindow < windowMaxSize && thisState && frame - thisWindow >= 0) {
             token = thisState->getToken();
             if (token != 0)
                 allSilence = false;
-            thisScore += emissions[(frame - thisWindow) * T + token];
+            thisScore += emission->matrix[(frame - thisWindow) * T + token];
             if (transitions) {
                 thisScore += transitions[prevToken * T + token];
             }
@@ -401,133 +468,38 @@ struct ViterbiDifferenceRejecter {
     }
 
     void precomputeViterbiWindowScores(int segStart, const std::vector<int> &viterbiToks) {
+        int t = emission->n_tokens;
         float score = 0;
         const int N = viterbiToks.size();
         for (int j = segStart; j < N; ++j) {
-            score += emissions[(j - segStart) * T + viterbiToks[j]];
+            score += emission->matrix[(j - segStart) * T + viterbiToks[j]];
             if (j != segStart && transitions)
                 score += transitions[viterbiToks[j] * T + viterbiToks[j - 1]];
             viterbiWindowScores.push_back(score);
             if (j - segStart < windowMaxSize - 1)
                 continue;
             auto r = j - (windowMaxSize - 1);
-            score -= emissions[(r - segStart) * T + viterbiToks[r]];
+            score -= emission->matrix[(r - segStart) * T + viterbiToks[r]];
             if (r != segStart && transitions)
                 score -= transitions[viterbiToks[r] * T + viterbiToks[r - 1]];
         }
     }
 };
 
-extern "C" {
-
-typedef struct w2l_engine w2l_engine;
-typedef struct w2l_decoder w2l_decoder;
-typedef struct w2l_emission w2l_emission;
-typedef struct w2l_decoderesult w2l_decoderesult;
-
-w2l_engine *w2l_engine_new() {
-    // TODO: what other engine config do I need?
-    auto engine = new Engine();
-    return reinterpret_cast<w2l_engine *>(engine);
-}
-
-bool w2l_engine_load_w2l(w2l_engine *engine, const char *acoustic_model_path, const char *tokens_path) {
-    return reinterpret_cast<Engine *>(engine)->loadW2lModel(acoustic_model_path, tokens_path);
-}
-
-bool w2l_engine_load_b2l(w2l_engine *engine, const char *path) {
-    return reinterpret_cast<Engine *>(engine)->loadB2lModel(path);
-}
-
-bool w2l_engine_export_w2l(w2l_engine *engine, const char *path) {
-    return reinterpret_cast<Engine *>(engine)->exportW2lModel(path);
-}
-
-bool w2l_engine_export_b2l(w2l_engine *engine, const char *path) {
-    return reinterpret_cast<Engine *>(engine)->exportB2lModel(path);
-}
-
-w2l_emission *w2l_engine_process(w2l_engine *engine, float *samples, size_t sample_count) {
-    auto emission = reinterpret_cast<Engine *>(engine)->process(samples, sample_count);
-    return reinterpret_cast<w2l_emission *>(emission);
-}
-
-void w2l_engine_free(w2l_engine *engine) {
-    if (engine)
-        delete reinterpret_cast<Engine *>(engine);
-}
-
-char *w2l_emission_text(w2l_emission *emission) {
-    return reinterpret_cast<Emission *>(emission)->text();
-}
-
-float *w2l_emission_values(w2l_emission *emission, int *frames, int *tokens) {
-    auto em = reinterpret_cast<Emission *>(emission);
-    auto data = afToVector<float>(em->emission);
-    *frames = em->emission.dims(1);
-    *tokens = em->emission.dims(0);
-    int datasize = sizeof(float) * *frames * *tokens;
-    float *out = static_cast<float *>(malloc(datasize));
-    memcpy(out, data.data(), datasize);
-    return out;
-}
-
-void w2l_emission_free(w2l_emission *emission) {
-    if (emission)
-        delete reinterpret_cast<Emission *>(emission);
-}
-
-w2l_decoder *w2l_decoder_new(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path, const w2l_decode_options *opts) {
-    // TODO: what other config? beam size? smearing? lm weight?
-    auto decoder = new WrapDecoder(reinterpret_cast<Engine *>(engine), kenlm_model_path, lexicon_path, flattrie_path, opts);
-    return reinterpret_cast<w2l_decoder *>(decoder);
-}
-
-w2l_decoderesult *w2l_decoder_decode(w2l_decoder *decoder, w2l_emission *emission) {
-    auto result = new DecodeResult(reinterpret_cast<WrapDecoder *>(decoder)->decode(reinterpret_cast<Emission *>(emission)));
-    return reinterpret_cast<w2l_decoderesult *>(result);
-}
-
-char *w2l_decoder_result_words(w2l_decoder *decoder, w2l_decoderesult *decoderesult) {
-    auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
-    auto result = reinterpret_cast<DecodeResult *>(decoderesult);
-    return decoderObj->resultWords(*result);
-}
-
-char *w2l_decoder_result_tokens(w2l_decoder *decoder, w2l_decoderesult *decoderesult) {
-    auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
-    auto result = reinterpret_cast<DecodeResult *>(decoderesult);
-    return decoderObj->resultTokens(*result);
-}
-
-void w2l_decoderesult_free(w2l_decoderesult *decoderesult) {
-    if (decoderesult)
-        delete reinterpret_cast<DecodeResult *>(decoderesult);
-}
-
-void w2l_decoder_free(w2l_decoder *decoder) {
-    if (decoder)
-        delete reinterpret_cast<WrapDecoder *>(decoder);
-}
-
-char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *emission, w2l_dfa_node *dfa, w2l_dfa_decode_options *opts) {
-    auto engineObj = reinterpret_cast<Engine *>(engine);
-    auto decoderObj = reinterpret_cast<WrapDecoder *>(decoder);
-    auto emissionObj = reinterpret_cast<Emission *>(emission);
-    auto rawEmission = emissionObj->emission;
-
+char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t dfa_size) {
+    /*
     auto emissionVec = afToVector<float>(rawEmission);
     int T = rawEmission.dims(0);
     int N = rawEmission.dims(1);
-    auto &transitions = decoderObj->decoder->transitions_;
+    */
 
-    auto tokensToString = [engineObj](const std::vector<int> &tokens, int from, int to) {
+    auto tokensToString = [this](const std::vector<int> &tokens, int from, int to) {
         std::string out;
         for (int i = from; i < to; ++i)
-            out.append(engineObj->tokenDict.getEntry(tokens[i]));
+            out.append(tokenDict.getEntry(tokens[i]));
         return out;
     };
-    auto tokensToStringDedup = [engineObj, decoderObj](const std::vector<int> &tokens, int from, int to) {
+    auto tokensToStringDedup = [this](const std::vector<int> &tokens, int from, int to) {
         std::ostringstream ostr;
         int tok = -1;
         bool lastBlank = false;
@@ -535,8 +507,8 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
             if (tok == tokens[i])
                 continue;
             tok = tokens[i];
-            if (tok >= 0 && tok != decoderObj->blankIdx) {
-                std::string s = engineObj->tokenDict.getEntry(tok);
+            if (tok >= 0 && tok != blankIdx) {
+                std::string s = tokenDict.getEntry(tok);
                 if (!s.empty() && s[0] == '_') {
                     if (ostr.tellp() > 0) {
                         ostr << " ";
@@ -545,19 +517,20 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
                 }
                 ostr << s;
             }
-            lastBlank = (tok == decoderObj->blankIdx);
+            lastBlank = (tok == blankIdx);
         }
         return ostr.str();
     };
 
-    auto viterbiToks =
-        afToVector<int>(engineObj->viterbiPath(rawEmission));
+    // TODO: actually do viterbi somewhere "greedy decode" per criterion
+    std::vector<int> viterbiToks;
+    // auto viterbiToks = afToVector<int>(engineObj->viterbiPath(rawEmission));
     assert(N == viterbiToks.size());
 
     // Lets skip decoding if viterbi thinks it's all silence
     bool allSilence = true;
     for (auto t : viterbiToks) {
-        if (t != decoderObj->silIdx && t != decoderObj->blankIdx) {
+        if (t != silIdx && t != blankIdx) {
             allSilence = false;
             break;
         }
@@ -565,19 +538,18 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     if (allSilence)
         return nullptr;
 
-    auto dfalm = DFALM::LM{decoderObj->lm, decoderObj->lm->start(0), decoderObj->flatTrie, dfa, decoderObj->silIdx, decoderObj->decoderOpt.criterionType == CriterionType::ASG};
-    dfalm.commandScore = opts->command_score;
-    dfalm.firstCommandLabel = decoderObj->wordList.size();
+    auto dfalm = DFALM::LM{lm, lm->start(0), flatTrie, dfa, silIdx, decoderOpt.criterionType == CriterionType::ASG};
+    dfalm.commandScore = opts.command_score;
+    dfalm.firstCommandLabel = wordList.size();
 
     auto commandDecoder = CombinedDecoder{
-                decoderObj->decoderOpt,
-                dfalm,
-                decoderObj->silIdx,
-                decoderObj->blankIdx,
-                decoderObj->unkLabel,
-                transitions};
+        dfalm,
+        silIdx,
+        blankIdx,
+        unkLabel,
+        transitions};
 
-    if (opts->debug) {
+    if (opts.debug) {
         std::cout << "detecting in viterbi toks: " << tokensToString(viterbiToks, 0, viterbiToks.size()) << std::endl;
     }
 
@@ -592,55 +564,52 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     };
 
     ViterbiDifferenceRejecter rejecter;
-    rejecter.windowMaxSize = opts->rejection_window_frames;
-    rejecter.threshold = opts->rejection_threshold;
-    rejecter.emissions = emissionVec.data();
-    rejecter.silIdx = decoderObj->silIdx;
+    rejecter.windowMaxSize = opts.rejection_window_frames;
+    rejecter.threshold = opts.rejection_threshold;
+    rejecter.emission = emission;
+    rejecter.silIdx = silIdx;
     if (transitions.size() == 0) {
         rejecter.transitions = NULL;
     } else {
         rejecter.transitions = transitions.data();
     }
-    rejecter.T = T;
     rejecter.precomputeViterbiWindowScores(0, viterbiToks);
     rejecter.viterbiToks = viterbiToks;
 
     DFALM::State commandState;
     commandState.grammarLex = dfalm.dfa;
 
-
     // in the future we could stop the decode after one word instead of
     // decoding everything
-    int decodeLen = N;
     std::vector<CombinedDecoder::DecoderState> startStates;
-    startStates.emplace_back(commandState, nullptr, 0.0, decoderObj->silIdx, -1);
+    startStates.emplace_back(commandState, nullptr, 0.0, silIdx, -1);
 
     auto unfinishedBeams = [&]() {
         const auto parallelBeamsearch = false;
         if (!parallelBeamsearch)
-            return commandDecoder.normalAll(emissionVec.data(), decodeLen, T, startStates, rejecter);
+            return commandDecoder.normalAll(decoderOpt, emission, startStates, rejecter);
 
         int nThreads = 4;
         int stepsPerFanout = 5;
-        int threadBeamSize = commandDecoder.opt_.beamSize / nThreads;
-        return commandDecoder.groupThreading(emissionVec.data(), decodeLen, T, startStates, rejecter, nThreads, stepsPerFanout, threadBeamSize);
+        int threadBeamSize = decoderOpt.beamSize / nThreads;
+        return commandDecoder.groupThreading(decoderOpt, emission, startStates, rejecter, nThreads, stepsPerFanout, threadBeamSize);
     }();
 
     // Finishing kills beams that end in the middle of a word, or
     // in a grammar state that isn't TERM
     std::vector<CombinedDecoder::DecoderState> beamEnds;
-    beamSearchFinish(beamEnds, unfinishedBeams.hyp.back(), dfalm, commandDecoder.opt_);
+    beamSearchFinish(beamEnds, unfinishedBeams.hyp.back(), dfalm, decoderOpt);
 
     if (beamEnds.empty())
         return nullptr;
 
-    if (opts->debug) {
+    if (opts.debug) {
         for (const auto &beamEnd : beamEnds) {
-            auto decodeResult = _getHypothesis(&beamEnd, decodeLen + 1);
+            auto decodeResult = _getHypothesis(&beamEnd, emission->n_frames);
 
             auto decoderToks = decodeResult.tokens;
             decoderToks.erase(decoderToks.begin()); // initial hyp token
-            std::cout << decodeResult.score << " " << tokensToString(decoderToks, 0, N) << std::endl;
+            std::cout << decodeResult.score << " " << tokensToString(decoderToks, 0, emission->n_frames) << std::endl;
         }
     }
 
@@ -648,92 +617,29 @@ char *w2l_decoder_dfa(w2l_engine *engine, w2l_decoder *decoder, w2l_emission *em
     if (beamEnds[0].score < -100000)
         return nullptr;
 
-    // convert the best beam to a result stringis
+    // convert the best beam to a result string
     auto decodeResult = _getHypothesis(&beamEnds[0], unfinishedBeams.hyp.size());
     std::string result;
 
-    if (decoderObj->decoderOpt.criterionType == CriterionType::CTC) {
+    if (decoderOpt.criterionType == CriterionType::CTC) {
         result = tokensToStringDedup(decodeResult.tokens, 1, decodeResult.tokens.size());
     } else {
         int lastSilence = -1;
         for (int i = 0; i < decodeResult.words.size(); ++i) {
             const auto label = decodeResult.words[i];
             if (label >= 0 && label < dfalm.firstCommandLabel) {
-                result = appendSpaced(result, decoderObj->wordList[label], false);
+                result = appendSpaced(result, wordList[label], false);
             } else if (label >= dfalm.firstCommandLabel) {
                 result = appendSpaced(result, tokensToStringDedup(decodeResult.tokens, lastSilence + 1, i), true);
             }
             const auto token = decodeResult.tokens[i];
-            if (token == decoderObj->silIdx)
+            if (token == silIdx)
                 lastSilence = i;
         }
     }
-    if (opts->debug)
+    if (opts.debug)
         std::cout << "  result: " << result << std::endl << std::endl;
 
+    // TODO: return DecodeResult instead?
     return strdup(result.c_str());
 }
-
-bool w2l_make_flattrie(w2l_engine *engine, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path) {
-    auto engineObj = reinterpret_cast<Engine *>(engine);
-    auto tokenDict = engineObj->tokenDict;
-    auto silIdx = getSilIdx(tokenDict);
-
-    auto lexicon = loadWords(lexicon_path, -1);
-    auto wordList = loadWordList(lexicon_path);
-
-    Dictionary wordDict;
-    for (const auto& it : wordList) {
-      wordDict.addEntry(it);
-    }
-    wordDict.setDefaultIndex(wordDict.getIndex(kUnkToken));
-
-    // taken from Decode.cpp
-    // Build Trie
-    KenLM lm(kenlm_model_path, wordDict);
-    Trie trie(tokenDict.indexSize(), silIdx);
-    auto startState = lm.start(false);
-    for (auto& it : lexicon) {
-        const std::string& word = it.first;
-        int usrIdx = wordDict.getIndex(word);
-        float score = -1;
-        // if (FLAGS_decodertype == "wrd") {
-        if (true) {
-            LMStatePtr dummyState;
-            std::tie(dummyState, score) = lm.score(startState, usrIdx);
-        }
-        for (auto& tokens : it.second) {
-            auto tokensTensor = tkn2Idx(tokens, tokenDict, false /* replabel */ );
-            trie.insert(tokensTensor, usrIdx, score);
-        }
-    }
-
-    // Smearing
-    // TODO: smear mode argument?
-    SmearingMode smear_mode = SmearingMode::MAX;
-    /*
-    SmearingMode smear_mode = SmearingMode::NONE;
-    if (FLAGS_smearing == "logadd") {
-        smear_mode = SmearingMode::LOGADD;
-    } else if (FLAGS_smearing == "max") {
-        smear_mode = SmearingMode::MAX;
-    } else if (FLAGS_smearing != "none") {
-        LOG(FATAL) << "[Decoder] Invalid smearing mode: " << FLAGS_smearing;
-    }
-    */
-    trie.smear(smear_mode);
-
-    auto flatTrie = toFlatTrie(trie.getRoot());
-
-    std::ofstream out(flattrie_path, std::ios::out | std::ios::trunc | std::ios::binary);
-    if (!out.is_open())
-        return false;
-
-    size_t byteSize = 4 * flatTrie.storage.size();
-    out << byteSize;
-    out.write(reinterpret_cast<const char*>(flatTrie.storage.data()), byteSize);
-    out.close();
-    return out.good();
-}
-
-} // extern "C"

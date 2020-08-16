@@ -24,8 +24,8 @@
 #include "runtime/Logger.h"
 #include "runtime/Serial.h"
 
-#include "w2l.h"
-#include "w2l_p.h"
+#include "w2l_encode.h"
+#include "w2l_encode_backend.h"
 #include "b2l.h"
 
 using namespace w2l;
@@ -80,12 +80,7 @@ std::string findParens(std::string s, std::string left="(", std::string right=")
 
 }
 
-Emission::Emission(EngineBase *engine, af::array emission, af::array inputs) {
-    this->engine = engine;
-    this->emission = emission;
-    this->inputs = inputs;
-}
-
+/*
 char *Emission::text() {
     auto tokenPrediction =
         afToVector<int>(engine->criterion->viterbiPath(emission));
@@ -97,19 +92,29 @@ char *Emission::text() {
     }
     return strdup("");
 }
+*/
+
+w2l_emission *afToEmission(af::array af) {
+    int N = af.dims(0);
+    int T = af.dims(1);
+    size_t size = sizeof(w2l_emission) + sizeof(float) * N * T;
+    w2l_emission *emission = (w2l_emission *)malloc(size);
+    af.host(emission->matrix);
+    return emission;
+}
 
 Engine::Engine() {
     loaded = false;
 }
 
-Emission *Engine::process(float *samples, size_t sample_count) {
+w2l_emission *Engine::forward(float *samples, size_t sample_count) {
     struct W2lLoaderData data = {};
     std::copy(samples, samples + sample_count, std::back_inserter(data.input));
 
     auto feat = featurize({data}, {});
     auto input = af::array(feat.inputDims, feat.input.data());
     auto rawEmission = network->forward({fl::input(input)}).front();
-    return new Emission(this, rawEmission.array(), input);
+    return afToEmission(rawEmission.array());
 }
 
 af::array Engine::process(const af::array &features) {
@@ -131,7 +136,6 @@ bool Engine::loadW2lModel(std::string acousticModelPath, std::string tokensPath)
     if (criterionType == kCtcCriterion) {
         tokenDict.addEntry(kBlankToken);
     }
-    numClasses = tokenDict.indexSize();
     loaded = true;
     return true;
 }
@@ -226,7 +230,6 @@ bool Engine::loadB2lModel(std::string path) {
     if (criterionType == kCtcCriterion && tokens.back() != kBlankToken) {
         tokenDict.addEntry(kBlankToken);
     }
-    numClasses = tokenDict.indexSize();
     loaded = true;
     return true;
 }
