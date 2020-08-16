@@ -64,6 +64,22 @@ char *w2l_decoder_dfa(w2l_decoder *decoder, w2l_emission *emission, w2l_dfa_node
     return reinterpret_cast<PublicDecoder *>(decoder)->decodeDFA(emission, dfa, dfa_size);
 }
 
+char *w2l_decoder_greedy(w2l_decoder *c_decoder, w2l_emission *emission) {
+    auto decoder = reinterpret_cast<PublicDecoder *>(c_decoder);
+    std::vector<int> path(emission->n_frames);
+    decoder->decodeGreedy(emission, &path[0]);
+
+    std::ostringstream ostr;
+    int lastTok = -1;
+    for (int tok : path) {
+        if (tok == lastTok) continue;
+        lastTok = tok;
+        ostr << decoder->tokenDict.getEntry(tok);
+    }
+    auto str = ostr.str();
+    return strdup(str.c_str());
+}
+
 bool w2l_make_flattrie(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path) {
     return PublicDecoder::makeFlattrie(tokens, kenlm_model_path, lexicon_path, flattrie_path);
 }

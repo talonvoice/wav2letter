@@ -100,6 +100,9 @@ bool w2l_make_flattrie(const char *tokens, const char *kenlm_model_path, const c
  */
 char *w2l_decoder_dfa(w2l_decoder *decoder, w2l_emission *emission, w2l_dfa_node *dfa, size_t dfa_size);
 
+// greedy-decode an emission (e.g. viterbi or argmax)
+char *w2l_decoder_greedy(w2l_decoder *decoder, w2l_emission *emission);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

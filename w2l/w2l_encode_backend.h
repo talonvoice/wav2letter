@@ -26,8 +26,6 @@ public:
     bool exportB2lModel(std::string path);
 
     std::vector<float> transitions() const;
-    af::array viterbiPath(const af::array &data) const;
-
 private:
     std::string exportTokens();
     std::string layerArch(fl::Module *module);
