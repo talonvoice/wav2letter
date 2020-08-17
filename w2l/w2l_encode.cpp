@@ -1,4 +1,3 @@
-#include "w2l.h"
 #include "w2l_encode.h"
 #include "w2l_encode_backend.h"
 
