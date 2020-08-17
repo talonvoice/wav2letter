@@ -3,7 +3,7 @@
 #include <iterator>
 #include <vector>
 
-#include "w2l.h"
+#include "w2l_encode.h"
 #include "b2l.h"
 
 void usage() {
