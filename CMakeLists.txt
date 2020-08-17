@@ -188,7 +188,11 @@ if (NOT SKIP_W2L)
     )
     if (APPLE)
         target_link_libraries(w2l -Wl,-cache_path_lto,/tmp/lto-cache)
-        target_compile_options(w2l -Xpreprocessor -fopenmp)
+        target_compile_options(w2l PUBLIC -Xpreprocessor -fopenmp)
+    elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
+        # no openmp on windows yet
+    else()
+        target_compile_options(w2ldecode PUBLIC -fopenmp)
     endif()
 
     target_include_directories(
@@ -217,11 +221,11 @@ if (NOT SKIP_W2LDECODE)
     )
     if (APPLE)
         target_link_libraries(w2ldecode -Wl,-cache_path_lto,/tmp/lto-cache)
-        target_compile_options(w2ldecode -Xpreprocessor -fopenmp)
+        target_compile_options(w2ldecode PUBLIC -Xpreprocessor -fopenmp)
     elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
         # no openmp on windows yet
     else()
-        target_compile_options(w2ldecode -fopenmp)
+        target_compile_options(w2ldecode PUBLIC -fopenmp)
     endif()
     target_include_directories(
       w2ldecode
@@ -258,12 +262,12 @@ if (NOT SKIP_W2LSTREAM)
     )
     if (APPLE)
         target_link_libraries(w2lstream -Wl,-cache_path_lto,/tmp/lto-cache)
-        add_definitions(-Xpreprocessor -fopenmp)
+        target_compile_options(w2lstream PUBLIC -Xpreprocessor -fopenmp)
         target_link_libraries(w2lstream "-framework Accelerate")
     elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
         # no openmp on windows yet
     else()
-        target_compile_options(w2ldecode -fopenmp)
+        target_compile_options(w2lstream PUBLIC -fopenmp)
     endif()
 
     target_include_directories(
