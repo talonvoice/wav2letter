@@ -6,6 +6,12 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#ifdef _WIN32
+#define _POSIX_THREAD_SAFE_FUNCTIONS
+#include <time.h>
+#include <direct.h>
+#endif
+
 #include "libraries/common/Utils.h"
 
 #include <sys/stat.h>
