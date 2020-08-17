@@ -270,4 +270,4 @@ target_link_libraries(w2l_cli w2l)
 # target_link_libraries(simple_example w2lstream)
 
 install(TARGETS w2l w2ldecode w2lstream DESTINATION lib)
-install(FILES   w2l/w2l_encode.h w2l/w2l_decode.h w2l/w2lstream.h DESTINATION include)
+install(FILES   w2l/w2l_common.h w2l/w2l_encode.h w2l/w2l_decode.h w2l/w2lstream.h DESTINATION include)
