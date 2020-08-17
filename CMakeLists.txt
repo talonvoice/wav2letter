@@ -204,7 +204,6 @@ target_link_libraries(w2ldecode
     ${KENLM_LIBRARIES}
     ${OPENMP_LIBRARIES}
     ${GFLAGS_LIBRARIES}
-    ${GLOG_LIBRARIES}
     ${LIBOMP}
 )
 if (APPLE)
