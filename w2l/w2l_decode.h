@@ -3,6 +3,9 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "w2l_common.h"
 #include "w2l_encode.h"
 
