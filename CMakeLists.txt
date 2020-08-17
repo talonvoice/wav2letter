@@ -266,7 +266,7 @@ endif()
 
 if (NOT SKIP_W2L)
     add_executable(w2l_cli w2l/cli.cpp)
-    target_link_libraries(w2l_cli w2l)
+    target_link_libraries(w2l_cli w2l dl)
 endif()
 
 # add_executable(simple_example
