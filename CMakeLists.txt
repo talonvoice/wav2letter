@@ -8,10 +8,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # link_directories(${PROJECT_SOURCE_DIR}/../opt/lib)
 include_directories(${PROJECT_SOURCE_DIR}/../opt/include)
 include_directories(inference/ src/)
-add_definitions(-flto=thin)
 
-find_library(LIBOMP NAMES libomp.a)
-find_package(GFLAGS REQUIRED)
+if (CMAKE_SYSTEM_NAME MATCHES "Windows")
+    find_library(GFLAGS_LIBRARIES NAMES libgflags_static.a)
+    set(GFLAGS_LIBRARIES ${GFLAGS_LIBRARIES} shlwapi)
+    set(LIBOMP "")
+else()
+    add_definitions(-flto=thin)
+    find_package(GFLAGS REQUIRED)
+    find_library(LIBOMP NAMES libomp.a)
+endif()
+
 find_package(kenlm REQUIRED)
 set(KENLM_MAX_ORDER 6 CACHE STRING "KENLM_MAX_ORDER")
 add_definitions(-DBMR_USE_QUICKSELECT -DKENLM_MAX_ORDER=${KENLM_MAX_ORDER})
@@ -174,7 +181,6 @@ if (NOT SKIP_W2L)
         "-L${PROJECT_SOURCE_DIR}/../opt/lib"
         ${KENLM_LIBRARIES}
         ${IPP_LIBS}
-        ${OPENMP_LIBRARIES}
         flashlight::flashlight
         ${GFLAGS_LIBRARIES}
         ${GLOG_LIBRARIES}
@@ -182,7 +188,7 @@ if (NOT SKIP_W2L)
     )
     if (APPLE)
         target_link_libraries(w2l -Wl,-cache_path_lto,/tmp/lto-cache)
-        add_definitions(-Xpreprocessor -fopenmp)
+        target_compile_options(w2l -Xpreprocessor -fopenmp)
     endif()
 
     target_include_directories(
@@ -206,13 +212,16 @@ if (NOT SKIP_W2LDECODE)
     target_link_libraries(w2ldecode
         "-L${PROJECT_SOURCE_DIR}/../opt/lib"
         ${KENLM_LIBRARIES}
-        ${OPENMP_LIBRARIES}
         ${GFLAGS_LIBRARIES}
         ${LIBOMP}
     )
     if (APPLE)
         target_link_libraries(w2ldecode -Wl,-cache_path_lto,/tmp/lto-cache)
-        add_definitions(-Xpreprocessor -fopenmp)
+        target_compile_options(w2ldecode -Xpreprocessor -fopenmp)
+    elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
+        # no openmp on windows yet
+    else()
+        target_compile_options(w2ldecode -fopenmp)
     endif()
     target_include_directories(
       w2ldecode
@@ -221,7 +230,7 @@ if (NOT SKIP_W2LDECODE)
       ${KENLM_INCLUDE_DIRS}
       ${FLASHLIGHT_INCLUDE_DIRS}
     )
-endif()
+endif() # SKIP_W2LDECODE
 
 # w2lstream target
 if (NOT SKIP_W2LSTREAM)
@@ -251,6 +260,10 @@ if (NOT SKIP_W2LSTREAM)
         target_link_libraries(w2lstream -Wl,-cache_path_lto,/tmp/lto-cache)
         add_definitions(-Xpreprocessor -fopenmp)
         target_link_libraries(w2lstream "-framework Accelerate")
+    elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
+        # no openmp on windows yet
+    else()
+        target_compile_options(w2ldecode -fopenmp)
     endif()
 
     target_include_directories(
@@ -262,7 +275,7 @@ if (NOT SKIP_W2LSTREAM)
 
     add_executable(wavstream w2l/wavstream.c)
     target_link_libraries(wavstream w2lstream)
-endif()
+endif() # SKIP_W2LSTREAM
 
 if (NOT SKIP_W2L)
     add_executable(w2l_cli w2l/cli.cpp)
@@ -276,5 +289,5 @@ endif()
 # )
 # target_link_libraries(simple_example w2lstream)
 
-install(TARGETS w2l w2ldecode w2lstream DESTINATION lib)
-install(FILES   w2l/w2l_common.h w2l/w2l_encode.h w2l/w2l_decode.h w2l/w2lstream.h DESTINATION include)
+install(TARGETS w2ldecode DESTINATION lib)
+install(FILES   w2l/w2l_common.h w2l/w2l_decode.h DESTINATION include)
