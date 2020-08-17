@@ -192,7 +192,7 @@ if (NOT SKIP_W2L)
     elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
         # no openmp on windows yet
     else()
-        target_compile_options(w2ldecode PUBLIC -fopenmp)
+        target_compile_options(w2l PUBLIC -fopenmp)
     endif()
 
     target_include_directories(
@@ -202,6 +202,8 @@ if (NOT SKIP_W2L)
       ${KENLM_INCLUDE_DIRS}
       ${FLASHLIGHT_INCLUDE_DIRS}
     )
+    install(TARGETS w2l DESTINATION lib)
+    install(FILES w2l/w2l_common.h w2l/w2l_encode.h w2l/w2l_decode.h DESTINATION include)
 endif() # SKIP_W2L
 
 # w2ldecode target
@@ -234,6 +236,8 @@ if (NOT SKIP_W2LDECODE)
       ${KENLM_INCLUDE_DIRS}
       ${FLASHLIGHT_INCLUDE_DIRS}
     )
+    install(TARGETS w2ldecode DESTINATION lib)
+    install(FILES w2l/w2l_common.h w2l/w2l_decode.h DESTINATION include)
 endif() # SKIP_W2LDECODE
 
 # w2lstream target
@@ -279,11 +283,13 @@ if (NOT SKIP_W2LSTREAM)
 
     add_executable(wavstream w2l/wavstream.c)
     target_link_libraries(wavstream w2lstream)
+    install(TARGETS wavstream DESTINATION bin)
 endif() # SKIP_W2LSTREAM
 
 if (NOT SKIP_W2L)
     add_executable(w2l_cli w2l/cli.cpp)
     target_link_libraries(w2l_cli w2l dl)
+    install(TARGETS w2l_cli DESTINATION bin)
 endif()
 
 # add_executable(simple_example
@@ -292,6 +298,3 @@ endif()
 #     inference/inference/examples/Util.cpp
 # )
 # target_link_libraries(simple_example w2lstream)
-
-install(TARGETS w2ldecode DESTINATION lib)
-install(FILES   w2l/w2l_common.h w2l/w2l_decode.h DESTINATION include)
