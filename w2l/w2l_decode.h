@@ -9,7 +9,7 @@ extern "C" {
 typedef struct {
     // encoder parameters
     float *transitions;
-    size_t transitions_size;
+    size_t transitions_len;
     const char *criterion;
 
     // pure decode options

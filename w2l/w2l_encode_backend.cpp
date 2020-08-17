@@ -85,6 +85,8 @@ w2l_emission *afToEmission(af::array af) {
     int T = af.dims(1);
     size_t size = sizeof(w2l_emission) + sizeof(float) * N * T;
     w2l_emission *emission = (w2l_emission *)malloc(size);
+    emission->n_tokens = N;
+    emission->n_frames = T;
     af.host(emission->matrix);
     return emission;
 }

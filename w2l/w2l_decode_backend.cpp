@@ -1,4 +1,3 @@
-#include <cassert>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -31,9 +30,9 @@ std::string join(const std::string& delim, const std::vector<std::string>& vec);
 class GreedyDecoder {
 public:
     static void decodeASG(w2l_emission *emission, float *transitions, int *path_out) {
-        int T = emission->n_tokens;
-        int N = emission->n_frames;
-        float *emissions = &emission->matrix[0];
+        int T = emission->n_frames;
+        int N = emission->n_tokens;
+        float *emissions = emission->matrix;
         std::vector<uint8_t> workspace(w2l::cpu::ViterbiPath<float>::getWorkspaceSize(1, T, N));
         w2l::cpu::ViterbiPath<float>::compute(
             1, // B
@@ -46,22 +45,23 @@ public:
     }
 
     static void decodeCTC(w2l_emission *emission, int *path_out) {
-        int T = emission->n_tokens;
-        int N = emission->n_frames;
-        float *emissions = &emission->matrix[0];
+        int T = emission->n_frames;
+        int N = emission->n_tokens;
+        float *emissions = emission->matrix;
         // CTC viterbi is just argmax
         for (int t = 0; t < T; t++) {
-            auto it = std::max_element(&emissions[t], &emissions[t + N]);
-            path_out[t] = std::distance(&emissions[t], it);
+            auto it = std::max_element(emissions, emissions + N);
+            path_out[t] = std::distance(emissions, it);
+            emissions += N;
         }
     }
 };
 
 DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts) {
     CriterionType criterionType;
-    if (opts.criterion == kCtcCriterion) {
+    if (std::string(opts.criterion) == kCtcCriterion) {
         criterionType = CriterionType::CTC;
-    } else if (opts.criterion == kAsgCriterion) {
+    } else if (std::string(opts.criterion) == kAsgCriterion) {
         criterionType = CriterionType::ASG;
     } else {
         std::cerr << "[Decoder] Invalid criterion type: " << opts.criterion << std::endl;
@@ -117,6 +117,10 @@ public:
         auto tokenStream = std::istringstream(tokens);
         tokenDict = Dictionary(tokenStream);
         // TODO: ensure that resulting tokenDict.indexSize() > 0?
+        if (tokenDict.indexSize() <= 0) {
+            std::cerr << "[Decoder] tokenDict.indexSize() <= 0" << std::endl;
+            abort();
+        }
         if (decoderOpt.criterionType == CriterionType::CTC &&
                 tokenDict.indexSize() > 0 &&
                 tokenDict.getEntry(tokenDict.indexSize() - 1) != kBlankToken) {
@@ -155,9 +159,9 @@ public:
         // safely retain external opts by copying transitions array and criterion string
         this->opts = *opts;
         this->opts.transitions = nullptr;
-        this->transitions.resize(opts->transitions_size);
-        if (opts->transitions != nullptr && opts->transitions_size > 0) {
-            std::copy(opts->transitions, opts->transitions + opts->transitions_size, this->transitions.begin());
+        this->transitions.resize(opts->transitions_len);
+        if (opts->transitions != nullptr && opts->transitions_len > 0) {
+            std::copy(opts->transitions, opts->transitions + opts->transitions_len, this->transitions.begin());
         }
         if (opts->criterion == std::string("asg")) {
             this->opts.criterion = "asg";
@@ -193,7 +197,11 @@ public:
         if (decoderOpt.criterionType == CriterionType::CTC) {
             GreedyDecoder::decodeCTC(emission, path);
         } else if (decoderOpt.criterionType == CriterionType::ASG) {
-            assert(transitions.size() == emission->n_tokens);
+            int64_t tokens_squared = emission->n_tokens * emission->n_tokens;
+            if (transitions.size() != tokens_squared) {
+                std::cerr << "[Decoder] transitions.size() {" << transitions.size() << "} != emission->n_tokens ** 2 {" << tokens_squared << "}" << std::endl;
+                abort();
+            }
             GreedyDecoder::decodeASG(emission, &transitions[0], path);
         } else {
             std::cerr << "[Decoder] Unknown criterion enum: " << (int)decoderOpt.criterionType << std::endl;
@@ -231,7 +239,9 @@ public:
     static bool makeFlattrie(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path) {
         auto tokenStream = std::istringstream(tokens);
         Dictionary tokenDict(tokenStream);
-        // TODO: ensure that resulting tokenDict.indexSize() > 0?
+        if (tokenDict.indexSize() <= 0) {
+            return false;
+        }
         auto silIdx = getSilIdx(tokenDict);
 
         auto lexicon = loadWords(lexicon_path, -1);
@@ -471,24 +481,24 @@ struct ViterbiDifferenceRejecter {
     float threshold;
     w2l_emission *emission;
     float *transitions;
-    int T;
 
     float extraNewTokenScore(int frame, const CombinedDecoder::DecoderState &prevState, int token) const {
-        int t = emission->n_tokens;
+        const int T = emission->n_frames;
+        const int N = emission->n_tokens;
         auto refScore = viterbiWindowScores[frame];
 
         bool allSilence = token == silIdx;
         int prevToken = token;
         auto thisState = &prevState;
-        float thisScore = emission->matrix[frame * T + token];
+        float thisScore = emission->matrix[frame * N + token];
         int thisWindow = 1;
         while (thisWindow < windowMaxSize && thisState && frame - thisWindow >= 0) {
             token = thisState->getToken();
             if (token != 0)
                 allSilence = false;
-            thisScore += emission->matrix[(frame - thisWindow) * T + token];
+            thisScore += emission->matrix[(frame - thisWindow) * N + token];
             if (transitions) {
-                thisScore += transitions[prevToken * T + token];
+                thisScore += transitions[prevToken * N + token];
             }
             ++thisWindow;
             prevToken = token;
@@ -512,20 +522,20 @@ struct ViterbiDifferenceRejecter {
     }
 
     void precomputeViterbiWindowScores(int segStart, const std::vector<int> &viterbiToks) {
-        int t = emission->n_tokens;
+        const int T = emission->n_frames;
+        const int N = emission->n_tokens;
         float score = 0;
-        const int N = viterbiToks.size();
-        for (int j = segStart; j < N; ++j) {
-            score += emission->matrix[(j - segStart) * T + viterbiToks[j]];
+        for (int j = segStart; j < T; ++j) {
+            score += emission->matrix[(j - segStart) * N + viterbiToks[j]];
             if (j != segStart && transitions)
-                score += transitions[viterbiToks[j] * T + viterbiToks[j - 1]];
+                score += transitions[viterbiToks[j] * N + viterbiToks[j - 1]];
             viterbiWindowScores.push_back(score);
             if (j - segStart < windowMaxSize - 1)
                 continue;
             auto r = j - (windowMaxSize - 1);
-            score -= emission->matrix[(r - segStart) * T + viterbiToks[r]];
+            score -= emission->matrix[(r - segStart) * N + viterbiToks[r]];
             if (r != segStart && transitions)
-                score -= transitions[viterbiToks[r] * T + viterbiToks[r - 1]];
+                score -= transitions[viterbiToks[r] * N + viterbiToks[r - 1]];
         }
     }
 };
@@ -533,8 +543,9 @@ struct ViterbiDifferenceRejecter {
 char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t dfa_size) {
     auto tokensToString = [this](const std::vector<int> &tokens, int from, int to) {
         std::string out;
-        for (int i = from; i < to; ++i)
+        for (int i = from; i < to; ++i) {
             out.append(tokenDict.getEntry(tokens[i]));
+        }
         return out;
     };
     auto tokensToStringDedup = [this](const std::vector<int> &tokens, int from, int to) {
@@ -587,7 +598,7 @@ char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t
         transitions};
 
     if (opts.debug) {
-        std::cout << "detecting in viterbi toks: " << tokensToString(viterbiToks, 0, viterbiToks.size()) << std::endl;
+        std::cerr << "detecting in viterbi toks: " << tokensToString(viterbiToks, 0, viterbiToks.size()) << std::endl;
     }
 
     auto appendSpaced = [&](const std::string &base, const std::string &str, bool command = false) {
@@ -642,11 +653,9 @@ char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t
 
     if (opts.debug) {
         for (const auto &beamEnd : beamEnds) {
-            auto decodeResult = _getHypothesis(&beamEnd, emission->n_frames);
-
+            auto decodeResult = _getHypothesis(&beamEnd, emission->n_frames + 1);
             auto decoderToks = decodeResult.tokens;
-            decoderToks.erase(decoderToks.begin()); // initial hyp token
-            std::cout << decodeResult.score << " " << tokensToString(decoderToks, 0, emission->n_frames) << std::endl;
+            std::cerr << decodeResult.score << " " << tokensToString(decoderToks, 1, decoderToks.size() - 1) << std::endl;
         }
     }
 
@@ -659,10 +668,10 @@ char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t
     std::string result;
 
     if (decoderOpt.criterionType == CriterionType::CTC) {
-        result = tokensToStringDedup(decodeResult.tokens, 1, decodeResult.tokens.size());
+        result = tokensToStringDedup(decodeResult.tokens, 1, decodeResult.tokens.size() - 1);
     } else {
         int lastSilence = -1;
-        for (int i = 0; i < decodeResult.words.size(); ++i) {
+        for (int i = 0; i < decodeResult.words.size() - 1; ++i) {
             const auto label = decodeResult.words[i];
             if (label >= 0 && label < dfalm.firstCommandLabel) {
                 result = appendSpaced(result, wordList[label], false);
@@ -675,7 +684,7 @@ char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t
         }
     }
     if (opts.debug)
-        std::cout << "  result: " << result << std::endl << std::endl;
+        std::cerr << "  result: " << result << std::endl << std::endl;
 
     // TODO: return DecodeResult instead?
     return strdup(result.c_str());

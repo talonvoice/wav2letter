@@ -74,7 +74,10 @@ char *w2l_decoder_greedy(w2l_decoder *c_decoder, w2l_emission *emission) {
     for (int tok : path) {
         if (tok == lastTok) continue;
         lastTok = tok;
-        ostr << decoder->tokenDict.getEntry(tok);
+        auto tokstr = decoder->tokenDict.getEntry(tok);
+        if (tokstr != kBlankToken) {
+            ostr << tokstr;
+        }
     }
     auto str = ostr.str();
     return strdup(str.c_str());
