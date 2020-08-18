@@ -112,7 +112,8 @@ static int getSilIdx(Dictionary &tokenDict) {
 
 class PublicDecoder {
 public:
-    PublicDecoder(const char *tokens, const char *languageModelPath, const char *lexiconPath, const char *flattriePath, const w2l_decode_options *opts) {
+    PublicDecoder(const char *tokens, const char *languageModelPath, const char *lexiconPath, const w2l_decode_options *opts) {
+        this->lexiconPath = lexiconPath;
         this->setOptions(opts);
         auto tokenStream = std::istringstream(tokens);
         tokenDict = Dictionary(tokenStream);
@@ -140,20 +141,104 @@ public:
 
         wordList = loadWordList(lexiconPath);
         lm = std::make_shared<KenLM>(languageModelPath, wordList);
+    }
+    ~PublicDecoder() {}
 
+    // FLATTRIE HEADER:
+    //  0: 'FLAT' (magic)
+    //  4: 4-byte version (1)
+    //  8: 32-byte  src file hash slot (written as zeroes, up to the caller to fill/check it)
+    // 40: 32-byte trie file hash slot (written as zeroes, up to the caller to fill/check it)
+    // 72: 8-byte data size
+    // 80: data...
+    bool loadTrie(const char *triePath) {
         // Load the trie
-        std::ifstream flatTrieIn(flattriePath);
+        std::ifstream f(triePath);
+
+        char     magic[4];
+        uint32_t version  = 0;
+        size_t   byteSize = 0;
+
+        f.read(         magic,    sizeof(magic));
+        f.read((char *)&version,  sizeof(version));
+        f.seekg(64, std::ios_base::cur); // skip the two hash slots
+        f.read((char *)&byteSize, sizeof(byteSize));
+        if (memcmp(magic, "FLAT", 4) != 0) { return false; }
+        if (version != 1)        { return false; }
+        if ((byteSize % 4) != 0) { return false; }
         flatTrie = std::make_shared<FlatTrie>();
-        size_t byteSize;
-        flatTrieIn >> byteSize;
         flatTrie->storage.resize(byteSize / 4);
-        flatTrieIn.read(reinterpret_cast<char *>(flatTrie->storage.data()), byteSize);
-        // TODO: some load-time checks here?
+        f.read(reinterpret_cast<char *>(flatTrie->storage.data()), byteSize);
 
         // the root maxScore should be 0 during search and it's more convenient to set here
         const_cast<FlatTrieNode *>(flatTrie->getRoot())->maxScore = 0;
+
+        return f.good();
     }
-    ~PublicDecoder() {}
+
+    bool makeTrie(const char *triePath) {
+        auto lexicon = loadWords(lexiconPath, -1);
+        Dictionary wordDict;
+        for (const auto& it : wordList) {
+            wordDict.addEntry(it);
+        }
+        wordDict.setDefaultIndex(wordDict.getIndex(kUnkToken));
+
+        // taken from Decode.cpp
+        // Build Trie
+        Trie trie(tokenDict.indexSize(), silIdx);
+        auto startState = lm->start(false);
+        for (auto& it : lexicon) {
+            const std::string& word = it.first;
+            int usrIdx = wordDict.getIndex(word);
+            float score = -1;
+            // if (FLAGS_decodertype == "wrd")
+            if (true) {
+                LMStatePtr dummyState;
+                std::tie(dummyState, score) = lm->score(startState, usrIdx);
+            }
+            for (auto& tokens : it.second) {
+                auto tokensTensor = tkn2Idx(tokens, tokenDict, false /* replabel */ );
+                trie.insert(tokensTensor, usrIdx, score);
+            }
+        }
+
+        // Smearing
+        // TODO: smear mode argument?
+        SmearingMode smear_mode = SmearingMode::MAX;
+        /*
+        SmearingMode smear_mode = SmearingMode::NONE;
+        if (FLAGS_smearing == "logadd") {
+            smear_mode = SmearingMode::LOGADD;
+        } else if (FLAGS_smearing == "max") {
+            smear_mode = SmearingMode::MAX;
+        } else if (FLAGS_smearing != "none") {
+            LOG(FATAL) << "[Decoder] Invalid smearing mode: " << FLAGS_smearing;
+        }
+        */
+        trie.smear(smear_mode);
+
+        auto flatTrie = toFlatTrie(trie.getRoot());
+        std::ofstream out(triePath, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!out.is_open())
+            return false;
+
+        // header is described above the loadTrie() method
+        const char *magic = "FLAT";
+        uint32_t version = 1;
+        char zeroHash[32];
+        memset(zeroHash, 0, 32);
+        uint64_t byteSize = 4 * flatTrie.storage.size();
+
+        out.write(          magic,    4);
+        out.write((char *) &version,  sizeof(version));
+        out.write(          zeroHash, sizeof(zeroHash));
+        out.write(          zeroHash, sizeof(zeroHash));
+        out.write((char *) &byteSize, sizeof(byteSize));
+        out.write((char *) (flatTrie.storage.data()), byteSize);
+        out.close();
+        return out.good();
+    }
 
     void setOptions(const w2l_decode_options *opts) {
         // safely retain external opts by copying transitions array and criterion string
@@ -236,73 +321,9 @@ public:
         return strdup(out.c_str());
     }
 
-    static bool makeFlattrie(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path) {
-        auto tokenStream = std::istringstream(tokens);
-        Dictionary tokenDict(tokenStream);
-        if (tokenDict.indexSize() <= 0) {
-            return false;
-        }
-        auto silIdx = getSilIdx(tokenDict);
-
-        auto lexicon = loadWords(lexicon_path, -1);
-        auto wordList = loadWordList(lexicon_path);
-
-        Dictionary wordDict;
-        for (const auto& it : wordList) {
-            wordDict.addEntry(it);
-        }
-        wordDict.setDefaultIndex(wordDict.getIndex(kUnkToken));
-
-        // taken from Decode.cpp
-        // Build Trie
-        KenLM lm(kenlm_model_path, wordDict);
-        Trie trie(tokenDict.indexSize(), silIdx);
-        auto startState = lm.start(false);
-        for (auto& it : lexicon) {
-            const std::string& word = it.first;
-            int usrIdx = wordDict.getIndex(word);
-            float score = -1;
-            // if (FLAGS_decodertype == "wrd")
-            if (true) {
-                LMStatePtr dummyState;
-                std::tie(dummyState, score) = lm.score(startState, usrIdx);
-            }
-            for (auto& tokens : it.second) {
-                auto tokensTensor = tkn2Idx(tokens, tokenDict, false /* replabel */ );
-                trie.insert(tokensTensor, usrIdx, score);
-            }
-        }
-
-        // Smearing
-        // TODO: smear mode argument?
-        SmearingMode smear_mode = SmearingMode::MAX;
-        /*
-        SmearingMode smear_mode = SmearingMode::NONE;
-        if (FLAGS_smearing == "logadd") {
-            smear_mode = SmearingMode::LOGADD;
-        } else if (FLAGS_smearing == "max") {
-            smear_mode = SmearingMode::MAX;
-        } else if (FLAGS_smearing != "none") {
-            LOG(FATAL) << "[Decoder] Invalid smearing mode: " << FLAGS_smearing;
-        }
-        */
-        trie.smear(smear_mode);
-
-        auto flatTrie = toFlatTrie(trie.getRoot());
-
-        std::ofstream out(flattrie_path, std::ios::out | std::ios::trunc | std::ios::binary);
-        if (!out.is_open())
-            return false;
-
-        size_t byteSize = 4 * flatTrie.storage.size();
-        out << byteSize;
-        out.write(reinterpret_cast<const char*>(flatTrie.storage.data()), byteSize);
-        out.close();
-        return out.good();
-    }
-
     std::shared_ptr<KenLM> lm;
     FlatTriePtr flatTrie;
+    std::string lexiconPath;
     std::vector<std::string> wordList;
     Dictionary tokenDict;
     DecoderOptions decoderOpt;
