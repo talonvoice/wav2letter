@@ -69,7 +69,7 @@ DecoderOptions toW2lDecoderOptions(const w2l_decode_options &opts) {
     }
     return DecoderOptions(
                 opts.beamsize,
-                25000, // beamsizetoken
+                opts.beamsizetoken,
                 opts.beamthresh,
                 opts.lmweight,
                 opts.wordscore, // lexiconscore
