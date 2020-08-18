@@ -153,26 +153,36 @@ public:
     // 80: data...
     bool loadTrie(const char *triePath) {
         // Load the trie
-        std::ifstream f(triePath);
-
+        std::ifstream f(triePath, std::ios::binary | std::ios::in);
+        if (!f) {
+            return false;
+        }
         char     magic[4];
+        char     srcHash[32];
+        char     trieHash[32];
         uint32_t version  = 0;
         size_t   byteSize = 0;
 
-        f.read(         magic,    sizeof(magic));
+        f.read(         magic,    4);
         f.read((char *)&version,  sizeof(version));
-        f.seekg(64, std::ios_base::cur); // skip the two hash slots
+        f.read(         srcHash,  sizeof(srcHash));
+        f.read(         trieHash, sizeof(trieHash));
         f.read((char *)&byteSize, sizeof(byteSize));
-        if (memcmp(magic, "FLAT", 4) != 0) { return false; }
-        if (version != 1)        { return false; }
-        if ((byteSize % 4) != 0) { return false; }
+        if (memcmp(magic, "FLAT", 4) != 0) {
+            return false;
+        }
+        if (version != 1) {
+            return false;
+        }
+        if ((byteSize % 4) != 0) {
+            return false;
+        }
         flatTrie = std::make_shared<FlatTrie>();
         flatTrie->storage.resize(byteSize / 4);
         f.read(reinterpret_cast<char *>(flatTrie->storage.data()), byteSize);
 
         // the root maxScore should be 0 during search and it's more convenient to set here
         const_cast<FlatTrieNode *>(flatTrie->getRoot())->maxScore = 0;
-
         return f.good();
     }
 
