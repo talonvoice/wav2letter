@@ -5,9 +5,9 @@ extern "C" {
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "w2l_common.h"
-#include "w2l_encode.h"
 
 // and is not retained by the caller, so caller doesn't need to manage the lifetime of transitions or criterionType;
 typedef struct {
