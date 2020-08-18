@@ -27,10 +27,20 @@ w2l_decode_options w2l_decode_defaults {
     false, // debug
 };
 
-w2l_decoder *w2l_decoder_new(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path, const w2l_decode_options *opts) {
+w2l_decoder *w2l_decoder_new(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const w2l_decode_options *opts) {
     // TODO: what other config? beam size? smearing? lm weight?
-    auto decoder = new PublicDecoder(tokens, kenlm_model_path, lexicon_path, flattrie_path, opts);
+    auto decoder = new PublicDecoder(tokens, kenlm_model_path, lexicon_path, opts);
     return reinterpret_cast<w2l_decoder *>(decoder);
+}
+
+bool w2l_decoder_load_trie(w2l_decoder *c_decoder, const char *trie_path) {
+    auto decoder = reinterpret_cast<PublicDecoder *>(c_decoder);
+    return decoder->loadTrie(trie_path);
+}
+
+bool w2l_decoder_make_trie(w2l_decoder *c_decoder, const char *trie_path) {
+    auto decoder = reinterpret_cast<PublicDecoder *>(c_decoder);
+    return decoder->makeTrie(trie_path);
 }
 
 w2l_decoderesult *w2l_decoder_decode(w2l_decoder *decoder, w2l_emission *emission) {
@@ -81,10 +91,6 @@ char *w2l_decoder_greedy(w2l_decoder *c_decoder, w2l_emission *emission) {
     }
     auto str = ostr.str();
     return strdup(str.c_str());
-}
-
-bool w2l_make_flattrie(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path) {
-    return PublicDecoder::makeFlattrie(tokens, kenlm_model_path, lexicon_path, flattrie_path);
 }
 
 } // extern "C"

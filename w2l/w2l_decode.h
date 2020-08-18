@@ -9,7 +9,7 @@ extern "C" {
 
 #include "w2l_common.h"
 
-// and is not retained by the caller, so caller doesn't need to manage the lifetime of transitions or criterionType;
+// this structure, including transitions and criterion, are copied by the callee and do not need to be retained by the caller
 typedef struct {
     // encoder parameters
     float *transitions;
@@ -57,20 +57,12 @@ extern w2l_decode_options w2l_decode_defaults;
 typedef struct w2l_decoder w2l_decoder;
 typedef struct w2l_decoderesult w2l_decoderesult;
 
-// decoder
-// w2l_decoder *w2l_decoder_new(const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path, const w2l_decode_options *opts);
-
-// state = w2l_decoder_state_new();
-// w2l_decoder_state_free(state);
-// decode(decoder, state, emission, dfa);
-
 // int w2l_beam_count(w2l_decoder_state *state);
 // char *w2l_beam_words(w2l_decoder_state *state, int beam);
 // char *w2l_beam_tokens(w2l_decoder_state *state, int beam);
 // float w2l_beam_score(w2l_decoder_state *state, int beam);
 
 // FIXME: DFA, resumable decoder
-// ?? w2l_decoder_decode(w2l_decoder *decoder, float *emission, size_t emission_count);
 
 #pragma pack(1)
 typedef struct {
@@ -85,14 +77,31 @@ typedef struct {
 } w2l_dfa_node;
 #pragma pack()
 
-w2l_decoder *w2l_decoder_new(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path, const w2l_decode_options *opts);
+// to use the decoder:
+//  decoder = w2l_decoder_new()
+//  if (!w2l_decoder_load_trie(decoder, trie_path)) {
+//    if (!w2l_decoder_make_trie(decoder, trie_path)) {
+//      // handle error
+//    }
+//    if (!w2l_decoder_load_trie(decoder, trie_path)) {
+//      // handle error
+//    }
+//  }
+//  result = w2l_decoder_decode(decoder, emission)
+//  char *text = w2l_decoder_result_words(decoder, result)
+//  free(text)
+//  w2l_decoderesult_free(result);
+//  w2l_decoder_free(decoder)
+
+w2l_decoder *w2l_decoder_new(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const w2l_decode_options *opts);
+bool w2l_decoder_load_trie(w2l_decoder *decoder, const char *trie_path);
+bool w2l_decoder_make_trie(w2l_decoder *decoder, const char *trie_path);
+
 w2l_decoderesult *w2l_decoder_decode(w2l_decoder *decoder, w2l_emission *emission);
 char *w2l_decoder_result_words(w2l_decoder *decoder, w2l_decoderesult *decoderesult);
 char *w2l_decoder_result_tokens(w2l_decoder *decoder, w2l_decoderesult *decoderesult);
 void w2l_decoderesult_free(w2l_decoderesult *decoderesult);
 void w2l_decoder_free(w2l_decoder *decoder);
-
-bool w2l_make_flattrie(const char *tokens, const char *kenlm_model_path, const char *lexicon_path, const char *flattrie_path);
 
 /** Decode emisssions according to dfa model, return decoded text.
  *
