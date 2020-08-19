@@ -353,7 +353,7 @@ auto BeamSearch<LM, LMStateType>::run(
                     return emissions[frame * nTokens_ + left] > emissions[frame * nTokens_ + right];
                 });
             indexSet.clear();
-            indexSet.insert(indices.begin(), indices.end());
+            indexSet.insert(indices.begin(), indices.begin() + opt_.beamSizeToken);
         }
         candidates.clear();
 
