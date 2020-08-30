@@ -599,7 +599,7 @@ public:
             auto param_count = reader.read64();
             layer.params.resize(param_count);
             for (ssize_t i = 0; i < param_count; i++) {
-                layer.params[i] = std::move(reader.array());
+                layer.params[i] = reader.array();
             }
         }
         return layers;
@@ -659,7 +659,7 @@ public:
     uint8_t version;          // 1
     std::string name;         // "streaming-convnets"
     std::vector<Section> sections;
-    std::unordered_map<std::string, int> section_lookup;
+    std::unordered_map<std::string, size_t> section_lookup;
 
     File(std::string name="") : magic("BW2L"), version(1), name(name) {}
 
