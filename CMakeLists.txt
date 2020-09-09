@@ -19,9 +19,7 @@ else()
     find_library(LIBOMP NAMES libomp.a)
 endif()
 
-find_package(kenlm REQUIRED)
-set(KENLM_MAX_ORDER 6 CACHE STRING "KENLM_MAX_ORDER")
-add_definitions(-DBMR_USE_QUICKSELECT -DKENLM_MAX_ORDER=${KENLM_MAX_ORDER})
+add_subdirectory(kenlm)
 
 if (NOT SKIP_W2L)
     # libw2l-only libraries:
