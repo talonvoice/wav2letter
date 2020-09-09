@@ -1,0 +1,12 @@
+This vendored KenLM is copied from https://github.com/kpu/kenlm commit 01c49fe86714276f77be9278d00906fc994256c1
+
+How to re-create this directory:
+
+rm -rf kenlm
+mkdir kenlm
+git clone https://github.com/kpu/kenlm.git kenlm-tmp
+cp -av kenlm-tmp/{lm,util} kenlm/
+find kenlm/ -name CMakeLists.txt -delete
+
+cp README kenlm-tmp/{LICENSE,COPYING} CMakeLists.txt kenlm/
+rm -rf kenlm-tmp kenlm/lm/{builder,common,filter,interpolate,wrappers}
