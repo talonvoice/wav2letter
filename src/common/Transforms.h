@@ -92,6 +92,7 @@ std::vector<T> localNormalize(
   int64_t perBatchSz = in.size() / batchSz;
   int64_t perFrameSz = perBatchSz / frameSz;
   auto out(in);
+  std::cout << "[local normalize]\n";
   for (size_t b = 0; b < batchSz; ++b) {
     std::vector<T> sum(frameSz, 0.0), sum2(frameSz, 0.0);
     int64_t curFrame = 0;
@@ -124,7 +125,13 @@ std::vector<T> localNormalize(
       }
       curFrame = (curFrame + 1) % frameSz;
     }
+    std::cout << "[" << b << "]";
+    for (auto i = b * perBatchSz; i < (b + 1) * perBatchSz; ++i) {
+        std::cout << " " << out[i];
+    }
+    std::cout << std::endl;
   }
+  std::cout << "[local normalize done]\n";
   return out;
 }
 
