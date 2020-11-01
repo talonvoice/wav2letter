@@ -185,7 +185,7 @@ if (NOT SKIP_W2L)
         ${IPP_LIBS}
         flashlight::flashlight
         ${GFLAGS_LIBRARIES}
-        ${GLOG_LIBRARIES}
+        glog
         ${LIBOMP}
     )
     if (APPLE)
