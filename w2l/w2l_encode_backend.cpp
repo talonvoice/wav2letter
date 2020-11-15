@@ -342,6 +342,23 @@ std::string Engine::layerArch(fl::Module *module) {
     // TYPE: TRANSFORMERS (TODO)
     // } else if (type == "Transformer") {
     // } else if (type == "PositionEmbedding") {
+    } else if (type == "Conformer") {
+        // Conformer (modelDim: 144), (mlpDim: 288), (nHeads: 4), (pDropout: 0.1), (pLayerDropout: 0), (bptt: 144), (convKernel: 19)
+        std::string _, num;
+        std::vector<std::string> numbers;
+        for (auto &chunk : splitAll(pretty, "), (")) {
+            std::tie(_, num) = splitOn(chunk, ": ");
+            trim(num, ")");
+            numbers.emplace_back(num);
+        }
+        std::string modelDim = numbers[0],
+                    mlpDim = numbers[1],
+                    nHeads = numbers[2],
+                    dropout = numbers[3],
+                    layerDropout = numbers[4],
+                    bptt = numbers[5],
+                    convsize = numbers[6];
+        ostr << "CTR " << modelDim << " " << mlpDim << " " << nHeads << " " << bptt << " " << convsize << " " << dropout << " " << layerDropout;
 
     // TYPE: CONVOLUTIONS
     } else if (type == "Conv2D") {
@@ -437,7 +454,30 @@ std::string Engine::layerArch(fl::Module *module) {
     } else if (type == "Dropout") {
         ostr << "DO " << findParens(pretty);
 
-    // TYPE: POOLING (TODO)
+    // TYPE: POOLING
+    } else if (type == "Pool2D-max" || type == "Pool2D-average") {
+        // Pool2D-max (2x1, 2,1, 0,0)
+        auto parens = findParens(pretty);
+        std::string wx, wy, dx, dy, px, py;
+
+        auto comma1 = parens.find(',') + 1;
+        std::tie(wx, wy) = splitOn(parens.substr(0, comma1), "x");
+
+        auto comma3 = parens.find(',', parens.find(',', comma1) + 1) + 1;
+        std::tie(dx, dy) = splitOn(parens.substr(comma1, comma3 - comma1 - 1), ",");
+
+        std::tie(px, py) = splitOn(parens.substr(comma3), ",");
+
+        if (type == "Pool2D-max") {
+            ostr << "M ";
+        } else if (type == "Pool2D-average") {
+            ostr << "A ";
+        } else {
+            std::cerr << "Unknown pooling layer: " << type << std::endl;
+        }
+        ostr << wx << " " << wy << " " << dx << " " << dy;
+        if (px != "0") { ostr << " " << px; }
+        if (py != "0") { ostr << " " << py; }
 
     // TYPE: ACTIVATIONS
     } else if (type == "ELU") {
@@ -474,6 +514,7 @@ std::string Engine::layerArch(fl::Module *module) {
     // TYPE: Unknown
     } else {
         std::cerr << "[w2lapi] error, unknown layer type: " << type << std::endl;
+        std::cerr << "[w2lapi] layer desc: " << pretty << std::endl;
         return "";
     }
     return ostr.str();
