@@ -113,6 +113,7 @@ set(INFERENCE_SRC
 )
 
 set(MODULE_SRC
+    src/module/Conformer.cpp
     src/module/ConvLmModule.cpp
     src/module/SpecAugment.cpp
     src/module/TDSBlock.cpp
