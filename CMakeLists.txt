@@ -10,6 +10,8 @@ include_directories(${PROJECT_SOURCE_DIR}/../opt/include)
 include_directories(inference/ src/)
 
 if (VENDOR_GFLAGS)
+    set(GFLAGS_INCLUDE_DIR gflags)
+    set(GFLAGS_LIBRARIES gflags)
     add_subdirectory(gflags)
 elseif(NOT CMAKE_SYSTEM_NAME MATCHES "Windows")
     find_package(GFLAGS REQUIRED)
