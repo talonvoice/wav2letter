@@ -396,7 +396,7 @@ auto BeamSearch<LM, LMStateType>::run(
             /* (1) Try children */
             repeatPrevLex &= prevLmState.forChildren(t, indexSet, lm_, [&, prevIdx, prevMaxScore](auto lmState, int n, bool hasChildren) {
                 if (n == prevIdx && (opt_.criterionType != CriterionType::CTC || !prevHyp.getPrevBlank()))
-                    repeatPrevLex = false;
+                    repeatPrevLex = true;
                 float score = prevHyp.score + emissions[frame * nTokens_ + n];
                 if (frame > 0 && transitions_.size() > 0) {
                     score += transitions_[n * nTokens_ + prevIdx];
