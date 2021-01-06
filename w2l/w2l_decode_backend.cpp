@@ -644,6 +644,9 @@ char *PublicDecoder::decodeDFA(w2l_emission *emission, w2l_dfa_node *dfa, size_t
 
     ViterbiDifferenceRejecter rejecter;
     rejecter.windowMaxSize = opts.rejection_window_frames;
+    if (rejecter.windowMaxSize <= 0) {
+        rejecter.windowMaxSize = 1;
+    }
     rejecter.threshold = opts.rejection_threshold;
     rejecter.emission = emission;
     rejecter.silIdx = silIdx;
