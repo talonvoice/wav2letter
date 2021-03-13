@@ -27,19 +27,17 @@ else()
     find_library(LIBOMP NAMES libomp.a)
 endif()
 
-if (NOT SKIP_W2L)
-    # libw2l-only libraries:
-    find_package(Glog REQUIRED)
-    find_package(Threads REQUIRED)
-    find_package(ArrayFire REQUIRED)
-    find_package(flashlight REQUIRED)
-    if (flashlight_FOUND)
-        message(STATUS "flashlight found (include: ${FLASHLIGHT_INCLUDE_DIRS} lib: flashlight::flashlight )")
-    else()
-        message(FATAL_ERROR "flashlight not found")
-    endif()
-    # end libw2l-only
+# libw2l-only libraries:
+find_package(Glog REQUIRED)
+find_package(Threads REQUIRED)
+find_package(ArrayFire REQUIRED)
+find_package(flashlight REQUIRED)
+if (flashlight_FOUND)
+    message(STATUS "flashlight found (include: ${FLASHLIGHT_INCLUDE_DIRS} lib: flashlight::flashlight )")
+else()
+    message(FATAL_ERROR "flashlight not found")
 endif()
+# end libw2l-only
 
 set(COMMON_SRC
     src/common/Defines.cpp
@@ -144,112 +142,55 @@ find_library(LIBIPPVM NAMES libippvm.a HINTS /opt/intel/ipp/lib)
 find_library(LIBIPPCORE NAMES libippcore.a HINTS /opt/intel/ipp/lib)
 set(IPP_LIBS ${LIBIPPS} ${LIBIPPCORE} ${LIBIPPVM})
 
-# w2l target
-if (NOT SKIP_W2L)
-    add_library(w2l SHARED
-        ${COMMON_SRC}
-        ${FEATURE_SRC}
-        ${MODULE_SRC}
-        ${CRITERION_SRC}
-        ${DATA_SRC}
+add_library(w2l SHARED
+    ${COMMON_SRC}
+    ${FEATURE_SRC}
+    ${MODULE_SRC}
+    ${CRITERION_SRC}
+    ${DATA_SRC}
 
-        w2l/w2l_encode.cpp
-        w2l/w2l_encode_backend.cpp
-    )
-    if (USE_MKL)
-        target_compile_definitions(w2l PUBLIC -DUSE_MKL -DW2L_LIBRARIES_USE_MKL)
-        find_library(MKL_CORE NAMES libmkl_core.a)
-        find_library(MKL_INTEL_LP64 NAMES libmkl_intel_lp64.a)
-        find_library(MKL_GNU_THREAD NAMES libmkl_gnu_thread.a)
-        target_link_libraries(w2l "-Wl,--start-group" ${MKL_CORE} ${MKL_INTEL_LP64} ${MKL_GNU_THREAD} "-Wl,--end-group")
-    else()
-        target_link_libraries(w2l "-framework Accelerate")
-    endif()
-
-    set_target_properties(ArrayFire::afcpu PROPERTIES INTERFACE_LINK_LIBRARIES "")
-    target_link_libraries(w2l
-        "-L${PROJECT_SOURCE_DIR}/../opt/lib"
-        ${KENLM_LIBRARIES}
-        ${IPP_LIBS}
-        flashlight::flashlight
-        ${GFLAGS_LIBRARIES}
-        glog
-        ${LIBOMP}
-    )
-    if (APPLE)
-        target_link_libraries(w2l -Wl,-cache_path_lto,/tmp/lto-cache)
-        target_compile_options(w2l PUBLIC -Xpreprocessor -fopenmp)
-    elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
-        # no openmp on windows yet
-    else()
-        target_compile_options(w2l PUBLIC -fopenmp)
-    endif()
-
-    target_include_directories(
-      w2l
-      PUBLIC
-      ${PROJECT_SOURCE_DIR}/src
-      ${KENLM_INCLUDE_DIRS}
-      ${FLASHLIGHT_INCLUDE_DIRS}
-    )
-    install(TARGETS w2l DESTINATION lib)
-    install(FILES w2l/w2l_common.h w2l/w2l_encode.h w2l/w2l_decode.h DESTINATION include)
-endif() # SKIP_W2L
-
-# w2lstream target
-if (NOT SKIP_W2LSTREAM)
-    add_library(w2lstream SHARED
-        ${COMMON_SRC}
-        ${FEATURE_SRC}
-        ${INFERENCE_SRC}
-        w2l/w2lstream.cpp
-    )
-    target_link_libraries(w2lstream
-        "-L${PROJECT_SOURCE_DIR}/../opt/lib"
-        ${GFLAGS_LIBRARIES}
-        ${IPP_LIBS}
-        ${KENLM_LIBRARIES}
-        ${LIBOMP}
-
-        # fbgemm
-        fbgemm
-        cpuinfo
-        asmjit
-        clog
-        pthread
-        dl
-    )
-    if (APPLE)
-        target_link_libraries(w2lstream -Wl,-cache_path_lto,/tmp/lto-cache)
-        target_compile_options(w2lstream PUBLIC -Xpreprocessor -fopenmp)
-        target_link_libraries(w2lstream "-framework Accelerate")
-    elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
-        # no openmp on windows yet
-    else()
-        target_compile_options(w2lstream PUBLIC -fopenmp)
-    endif()
-
-    target_include_directories(
-      w2lstream
-      PUBLIC
-      ${PROJECT_SOURCE_DIR}/src
-      ${KENLM_INCLUDE_DIRS}
-    )
-
-    add_executable(wavstream w2l/wavstream.c)
-    target_link_libraries(wavstream w2lstream)
-    install(TARGETS wavstream DESTINATION bin)
-endif() # SKIP_W2LSTREAM
-
-if (NOT SKIP_W2L)
-    add_executable(w2l_cli w2l/cli.cpp)
-    target_link_libraries(w2l_cli w2l dl)
-    install(TARGETS w2l_cli DESTINATION bin)
+    w2l/w2l_encode.cpp
+    w2l/w2l_encode_backend.cpp
+)
+if (USE_MKL)
+    target_compile_definitions(w2l PUBLIC -DUSE_MKL -DW2L_LIBRARIES_USE_MKL)
+    find_library(MKL_CORE NAMES libmkl_core.a)
+    find_library(MKL_INTEL_LP64 NAMES libmkl_intel_lp64.a)
+    find_library(MKL_GNU_THREAD NAMES libmkl_gnu_thread.a)
+    target_link_libraries(w2l "-Wl,--start-group" ${MKL_CORE} ${MKL_INTEL_LP64} ${MKL_GNU_THREAD} "-Wl,--end-group")
+else()
+    target_link_libraries(w2l "-framework Accelerate")
 endif()
 
-# add_executable(simple_example
-#     inference/inference/examples/SimpleStreamingASRExample.cpp
-#     inference/inference/examples/AudioToWords.cpp
-#     inference/inference/examples/Util.cpp
-# )
-# target_link_libraries(simple_example w2lstream)
+set_target_properties(ArrayFire::afcpu PROPERTIES INTERFACE_LINK_LIBRARIES "")
+target_link_libraries(w2l
+    "-L${PROJECT_SOURCE_DIR}/../opt/lib"
+    ${KENLM_LIBRARIES}
+    ${IPP_LIBS}
+    flashlight::flashlight
+    ${GFLAGS_LIBRARIES}
+    glog
+    ${LIBOMP}
+)
+if (APPLE)
+    target_link_libraries(w2l -Wl,-cache_path_lto,/tmp/lto-cache)
+    target_compile_options(w2l PUBLIC -Xpreprocessor -fopenmp)
+elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
+    # no openmp on windows yet
+else()
+    target_compile_options(w2l PUBLIC -fopenmp)
+endif()
+
+target_include_directories(
+  w2l
+  PUBLIC
+  ${PROJECT_SOURCE_DIR}/src
+  ${KENLM_INCLUDE_DIRS}
+  ${FLASHLIGHT_INCLUDE_DIRS}
+)
+install(TARGETS w2l DESTINATION lib)
+install(FILES w2l/w2l_common.h w2l/w2l_encode.h w2l/w2l_decode.h DESTINATION include)
+
+add_executable(w2l_cli w2l/cli.cpp)
+target_link_libraries(w2l_cli w2l dl)
+install(TARGETS w2l_cli DESTINATION bin)
