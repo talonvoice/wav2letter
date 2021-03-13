@@ -65,19 +65,6 @@ set(FEATURE_SRC
     src/libraries/feature/Windowing.cpp
 )
 
-set(DECODER_SRC
-    src/libraries/decoder/LexiconDecoder.cpp
-    src/libraries/decoder/LexiconFreeDecoder.cpp
-    src/libraries/decoder/LexiconFreeSeq2SeqDecoder.cpp
-    src/libraries/decoder/LexiconSeq2SeqDecoder.cpp
-    src/libraries/decoder/Trie.cpp
-    src/libraries/decoder/Utils.cpp
-
-    src/libraries/lm/ConvLM.cpp
-    src/libraries/lm/KenLM.cpp
-    src/libraries/lm/ZeroLM.cpp
-)
-
 set(DATA_SRC
     src/data/Featurize.cpp
     # src/data/FeatureTransforms.cpp
@@ -162,13 +149,11 @@ if (NOT SKIP_W2L)
     add_library(w2l SHARED
         ${COMMON_SRC}
         ${FEATURE_SRC}
-        ${DECODER_SRC}
         ${MODULE_SRC}
         ${CRITERION_SRC}
         ${DATA_SRC}
 
         w2l/w2l_encode.cpp
-        w2l/w2l_decode.cpp
         w2l/w2l_encode_backend.cpp
     )
     if (USE_MKL)
@@ -211,47 +196,12 @@ if (NOT SKIP_W2L)
     install(FILES w2l/w2l_common.h w2l/w2l_encode.h w2l/w2l_decode.h DESTINATION include)
 endif() # SKIP_W2L
 
-# w2ldecode target
-if (NOT SKIP_W2LDECODE)
-    add_library(w2ldecode SHARED
-        ${COMMON_SRC}
-        ${DECODER_SRC}
-        ${VITERBI_SRC}
-        w2l/w2l_decode.cpp
-    )
-
-    target_link_libraries(w2ldecode
-        "-L${PROJECT_SOURCE_DIR}/../opt/lib"
-        ${KENLM_LIBRARIES}
-        ${GFLAGS_LIBRARIES}
-        ${LIBOMP}
-    )
-    if (APPLE)
-        target_link_libraries(w2ldecode -Wl,-cache_path_lto,/tmp/lto-cache)
-        target_compile_options(w2ldecode PUBLIC -Xpreprocessor -fopenmp)
-    elseif (CMAKE_SYSTEM_NAME MATCHES "Windows")
-        # no openmp on windows yet
-    else()
-        target_compile_options(w2ldecode PUBLIC -fopenmp)
-    endif()
-    target_include_directories(
-      w2ldecode
-      PUBLIC
-      ${PROJECT_SOURCE_DIR}/src
-      ${KENLM_INCLUDE_DIRS}
-      ${FLASHLIGHT_INCLUDE_DIRS}
-    )
-    install(TARGETS w2ldecode DESTINATION lib)
-    install(FILES w2l/w2l_common.h w2l/w2l_decode.h DESTINATION include)
-endif() # SKIP_W2LDECODE
-
 # w2lstream target
 if (NOT SKIP_W2LSTREAM)
     add_library(w2lstream SHARED
         ${COMMON_SRC}
         ${FEATURE_SRC}
         ${INFERENCE_SRC}
-        ${DECODER_SRC}
         w2l/w2lstream.cpp
     )
     target_link_libraries(w2lstream
